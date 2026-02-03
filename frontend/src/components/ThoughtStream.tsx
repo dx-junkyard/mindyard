@@ -73,9 +73,17 @@ export function ThoughtStream() {
             pollingRef.current = undefined;
           }
         }
-      } catch (error) {
-        // エラー時はポーリングを続行（ログが削除された等の場合は停止）
+      } catch (error: any) {
         console.error('Polling error:', error);
+        // 404 Not Found の場合は、ログが存在しないためポーリングを停止する
+        if (error.response && error.response.status === 404) {
+          setPendingLogId(null);
+          setIsWaitingForAnalysis(false);
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = undefined;
+          }
+        }
       }
     };
 
