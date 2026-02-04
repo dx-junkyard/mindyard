@@ -5,10 +5,10 @@ Layer 2: 個人特定につながる情報を除去・置換するフィルタ�
 正確性が重要なため、BALANCEDモデルを使用。
 """
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from app.core.config import settings
-from app.core.llm import LLMClient, ModelTier
+from app.core.llm import llm_manager
+from app.core.llm_provider import LLMProvider, LLMUsageRole
 
 
 class PrivacySanitizer:
@@ -23,8 +23,7 @@ class PrivacySanitizer:
     """
 
     def __init__(self):
-        # BALANCEDモデルを使用
-        self.llm_client = LLMClient(tier=ModelTier.BALANCED) if settings.openai_api_key else None
+        self._provider: Optional[LLMProvider] = None
 
         # 正規表現パターン
         self.patterns = {
@@ -35,6 +34,20 @@ class PrivacySanitizer:
 
         # 日本人名のパターン（姓＋さん/様/氏など）
         self.name_suffixes = ["さん", "様", "氏", "君", "ちゃん", "先生", "部長", "課長", "社長"]
+
+    def _get_provider(self) -> Optional[LLMProvider]:
+        """LLMプロバイダーを取得（遅延初期化）"""
+        if self._provider is None:
+            try:
+                self._provider = llm_manager.get_client(LLMUsageRole.BALANCED)
+            except Exception:
+                pass
+        return self._provider
+
+    @property
+    def client(self) -> Optional[LLMProvider]:
+        """後方互換性のためのプロパティ"""
+        return self._get_provider()
 
     async def sanitize(self, content: str) -> Tuple[str, Dict]:
         """
@@ -52,7 +65,8 @@ class PrivacySanitizer:
         replacements.extend(regex_replacements)
 
         # Step 2: LLMベースの固有名詞一般化
-        if self.client:
+        provider = self._get_provider()
+        if provider:
             sanitized, llm_replacements = await self._apply_llm_generalization(sanitized)
             replacements.extend(llm_replacements)
         else:
@@ -133,6 +147,10 @@ class PrivacySanitizer:
 
     async def _apply_llm_generalization(self, content: str) -> Tuple[str, List[Dict]]:
         """LLMを使った固有名詞の一般化"""
+        provider = self._get_provider()
+        if not provider:
+            return content, []
+
         prompt = f"""以下のテキストに含まれる個人を特定できる情報を一般化してください。
 
 置換ルール:
@@ -158,7 +176,8 @@ class PrivacySanitizer:
 }}"""
 
         try:
-            result = await self.llm_client.chat_completion(
+            await provider.initialize()
+            result = await provider.generate_json(
                 messages=[
                     {
                         "role": "system",
@@ -167,7 +186,6 @@ class PrivacySanitizer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2,
-                json_response=True,
             )
 
             return result.get("sanitized_text", content), result.get("replacements", [])

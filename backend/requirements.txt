@@ -23,6 +23,9 @@ langchain==0.1.4
 langchain-openai==0.0.3
 tiktoken==0.5.2
 
+# Google Cloud AI Platform (Vertex AI / Gemini)
+google-cloud-aiplatform>=1.38.0
+
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
