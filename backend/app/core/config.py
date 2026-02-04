@@ -11,9 +11,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # デフォルトのLLM設定
-DEFAULT_LLM_CONFIG_FAST = {"provider": "openai", "model": "gpt-4o-mini"}
-DEFAULT_LLM_CONFIG_BALANCED = {"provider": "openai", "model": "gpt-4o"}
-DEFAULT_LLM_CONFIG_DEEP = {"provider": "openai", "model": "o1-preview"}
+DEFAULT_LLM_CONFIG_FAST = {"provider": "openai", "model": "gpt-5-nano"}
+DEFAULT_LLM_CONFIG_BALANCED = {"provider": "openai", "model": "gpt-5-mini"}
+DEFAULT_LLM_CONFIG_DEEP = {"provider": "openai", "model": "gpt-5.2"}
 
 
 class Settings(BaseSettings):
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
 
     # LLM Configuration (Multi-Provider, JSON format)
     # 環境変数でJSON文字列として設定可能
-    # 例: LLM_CONFIG_FAST='{"provider": "openai", "model": "gpt-4o-mini"}'
+    # 例: LLM_CONFIG_FAST='{"provider": "openai", "model": "gpt-5-nano"}'
     # 例: LLM_CONFIG_BALANCED='{"provider": "vertex", "model": "gemini-1.5-flash"}'
     llm_config_fast: str = Field(
         default=json.dumps(DEFAULT_LLM_CONFIG_FAST),
