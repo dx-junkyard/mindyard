@@ -107,8 +107,22 @@ Vertex AI を使用する場合は、以下の手順で設定してください�
 **1. Google Cloud プロジェクトの準備**
 
 ```bash
-# Google Cloud SDK のインストール（未インストールの場合）
-# https://cloud.google.com/sdk/docs/install
+# 認証情報を保存するフォルダを作成
+mkdir -p .gcp
+
+# CPUの種類に依存して、A, Bのどちらかを実行
+# A. 作業用コンテナを起動（対話モード）
+docker run -it --rm \
+  -v "$(pwd)/.gcp:/root/.config/gcloud" \
+  google/cloud-sdk:alpine \
+  /bin/bash
+
+# B. 作業用コンテナを起動（対話モード）: MacのM1/M2/M3以降
+docker run -it --rm \
+  --platform linux/arm64 \
+  -v "$(pwd)/.gcp:/root/.config/gcloud" \
+  google/cloud-sdk:alpine \
+  /bin/bash
 
 # 認証
 gcloud auth login
@@ -119,6 +133,9 @@ gcloud config set project YOUR_PROJECT_ID
 
 # Vertex AI API の有効化
 gcloud services enable aiplatform.googleapis.com
+
+# アプリケーション用の認証ファイル(ADC)を作成（再度URL認証が必要な場合があります）
+gcloud auth application-default login
 ```
 
 **2. 環境変数の設定**
