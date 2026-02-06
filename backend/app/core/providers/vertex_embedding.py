@@ -2,6 +2,7 @@
 MINDYARD - Vertex AI Embedding Provider
 Google Cloud Vertex AIを使用するEmbeddingプロバイダー実装
 """
+import asyncio
 from typing import List, Optional
 
 from app.core.embedding_provider import (
@@ -95,13 +96,13 @@ class VertexAIEmbeddingProvider(EmbeddingProvider):
         await self.initialize()
 
         try:
-            # Vertex AIのembedding APIは同期的なので、実行
-            embeddings = self.model.get_embeddings([text])
+            # Vertex AIのembedding APIは同期的なので、スレッドプールで実行
+            embeddings = await asyncio.to_thread(self.model.get_embeddings, [text])
             if embeddings and len(embeddings) > 0:
                 return embeddings[0].values
             return None
 
-        except Exception as e:
+        except Exception:
             return None
 
     async def embed_texts(self, texts: List[str]) -> Optional[List[List[float]]]:
@@ -116,10 +117,10 @@ class VertexAIEmbeddingProvider(EmbeddingProvider):
 
             for i in range(0, len(texts), batch_size):
                 batch = texts[i:i + batch_size]
-                embeddings = self.model.get_embeddings(batch)
+                embeddings = await asyncio.to_thread(self.model.get_embeddings, batch)
                 all_embeddings.extend([e.values for e in embeddings])
 
             return all_embeddings
 
-        except Exception as e:
+        except Exception:
             return None
