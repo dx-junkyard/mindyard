@@ -4,11 +4,12 @@ Layer 2: 生成されたインサイトをユーザーに提示し、共有の�
 
 バランスの取れた評価が必要なため、BALANCEDモデルを使用。
 """
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from datetime import datetime, timezone
 
 from app.core.config import settings
-from app.core.llm import LLMClient, ModelTier
+from app.core.llm import llm_manager
+from app.core.llm_provider import LLMProvider, LLMUsageRole
 
 
 class SharingBroker:
@@ -24,9 +25,17 @@ class SharingBroker:
     """
 
     def __init__(self):
-        # BALANCEDモデルを使用
-        self.llm_client = LLMClient(tier=ModelTier.BALANCED) if settings.openai_api_key else None
+        self._provider: Optional[LLMProvider] = None
         self.threshold = settings.sharing_threshold_score
+
+    def _get_provider(self) -> Optional[LLMProvider]:
+        """LLMプロバイダーを取得（遅延初期化）"""
+        if self._provider is None:
+            try:
+                self._provider = llm_manager.get_client(LLMUsageRole.BALANCED)
+            except Exception:
+                pass
+        return self._provider
 
     async def evaluate_sharing_value(self, insight: Dict) -> Dict:
         """
@@ -41,19 +50,20 @@ class SharingBroker:
                 "reasoning": str
             }
         """
-        if not self.llm_client:
+        provider = self._get_provider()
+        if not provider:
             return self._fallback_evaluate(insight)
 
         prompt = self._build_evaluation_prompt(insight)
 
         try:
-            result = await self.llm_client.chat_completion(
+            await provider.initialize()
+            result = await provider.generate_json(
                 messages=[
                     {"role": "system", "content": self._get_evaluation_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                json_response=True,
             )
 
             return self._parse_evaluation_result(result)

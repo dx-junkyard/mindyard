@@ -6,8 +6,8 @@ Layer 2: 個別の事象を汎用的な「教訓」や「パターン」に昇�
 """
 from typing import Dict, Optional
 
-from app.core.config import settings
-from app.core.llm import LLMClient, ModelTier
+from app.core.llm import llm_manager
+from app.core.llm_provider import LLMProvider, LLMUsageRole
 
 
 class InsightDistiller:
@@ -23,8 +23,16 @@ class InsightDistiller:
     """
 
     def __init__(self):
-        # BALANCEDモデルを使用
-        self.llm_client = LLMClient(tier=ModelTier.BALANCED) if settings.openai_api_key else None
+        self._provider: Optional[LLMProvider] = None
+
+    def _get_provider(self) -> Optional[LLMProvider]:
+        """LLMプロバイダーを取得（遅延初期化）"""
+        if self._provider is None:
+            try:
+                self._provider = llm_manager.get_client(LLMUsageRole.BALANCED)
+            except Exception:
+                pass
+        return self._provider
 
     async def distill(self, sanitized_content: str, metadata: Optional[Dict] = None) -> Dict:
         """
@@ -41,19 +49,20 @@ class InsightDistiller:
                 "tags": List[str],
             }
         """
-        if not self.llm_client:
+        provider = self._get_provider()
+        if not provider:
             return self._fallback_distill(sanitized_content)
 
         prompt = self._build_distill_prompt(sanitized_content)
 
         try:
-            result = await self.llm_client.chat_completion(
+            await provider.initialize()
+            result = await provider.generate_json(
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.4,
-                json_response=True,
             )
 
             return self._validate_result(result)

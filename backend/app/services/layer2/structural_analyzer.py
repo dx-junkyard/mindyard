@@ -11,8 +11,8 @@ Layer 2: 文脈依存型・構造的理解アップデート機能
 from typing import Dict, List, Optional
 from enum import Enum
 
-from app.core.config import settings
-from app.core.llm import LLMClient, ModelTier
+from app.core.llm import llm_manager
+from app.core.llm_provider import LLMProvider, LLMUsageRole
 
 
 class RelationshipType(str, Enum):
@@ -38,8 +38,16 @@ class StructuralAnalyzer:
     """
 
     def __init__(self):
-        # DEEPモデルを使用（複雑な構造的推論が必要なため）
-        self.llm_client = LLMClient(tier=ModelTier.DEEP) if settings.openai_api_key else None
+        self._provider: Optional[LLMProvider] = None
+
+    def _get_provider(self) -> Optional[LLMProvider]:
+        """LLMプロバイダーを取得（遅延初期化）"""
+        if self._provider is None:
+            try:
+                self._provider = llm_manager.get_client(LLMUsageRole.DEEP)
+            except Exception:
+                pass
+        return self._provider
 
     async def analyze(
         self,
@@ -64,7 +72,8 @@ class StructuralAnalyzer:
                 "model_info": dict  # 使用したモデル情報
             }
         """
-        if not self.llm_client:
+        provider = self._get_provider()
+        if not provider:
             return self._fallback_analyze(current_log, previous_hypothesis)
 
         prompt = self._build_analysis_prompt(
@@ -72,18 +81,18 @@ class StructuralAnalyzer:
         )
 
         try:
-            result = await self.llm_client.chat_completion(
+            await provider.initialize()
+            result = await provider.generate_json(
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.4,
-                json_response=True,
             )
 
             validated = self._validate_result(result)
             # モデル情報を追加（UIで表示用）
-            validated["model_info"] = self.llm_client.get_model_info()
+            validated["model_info"] = provider.get_model_info()
             return validated
 
         except Exception as e:
