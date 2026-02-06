@@ -60,9 +60,13 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: Optional[str] = None
 
+    # Google Cloud
+    google_cloud_project: Optional[str] = None  # GOOGLE_CLOUD_PROJECT env var
+
     # Vertex AI (Google Cloud)
     vertex_project_id: Optional[str] = None
     vertex_location: str = "us-central1"
+    google_application_credentials: Optional[str] = None  # ADC credentials path
 
     # Embedding Configuration (Multi-Provider, JSON format)
     # 例: EMBEDDING_CONFIG='{"provider": "openai", "model": "text-embedding-3-small"}'
@@ -160,11 +164,13 @@ class Settings(BaseSettings):
         """OpenAI APIが利用可能かどうか"""
         return bool(self.openai_api_key)
 
+    def get_vertex_project_id(self) -> Optional[str]:
+        """Vertex AI用のプロジェクトIDを取得（VERTEX_PROJECT_ID > GOOGLE_CLOUD_PROJECT の優先順）"""
+        return self.vertex_project_id or self.google_cloud_project
+
     def is_vertex_available(self) -> bool:
-        """Vertex AIが利用可能かどうか（ADCまたはプロジェクトID）"""
-        # プロジェクトIDが設定されているか、ADCが設定されていれば利用可能
-        # 実際の認証チェックはプロバイダー初期化時に行う
-        return True  # ADCは環境によって自動検出されるため常にtrueを返す
+        """Vertex AIが利用可能かどうか（プロジェクトIDまたはADCが設定されている）"""
+        return bool(self.get_vertex_project_id())
 
 
 @lru_cache

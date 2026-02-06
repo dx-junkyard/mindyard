@@ -125,7 +125,7 @@ class LLMManager:
             from app.core.providers.vertex import VertexAIProvider
             return VertexAIProvider(
                 config=provider_config,
-                project_id=settings.vertex_project_id,
+                project_id=settings.get_vertex_project_id(),
                 location=settings.vertex_location,
             )
         else:
