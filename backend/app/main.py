@@ -66,7 +66,7 @@ app = FastAPI(
 # CORS設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.backend_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -90,7 +90,30 @@ async def root():
 @app.get("/health")
 async def health_check():
     """ヘルスチェックエンドポイント"""
+    from app.core.llm import llm_manager
+    from app.core.llm_provider import LLMUsageRole
+    from app.core.embedding import embedding_manager
+
+    llm_providers = {}
+    for role in LLMUsageRole:
+        config = settings.get_llm_config(role.value)
+        llm_providers[role.value] = {
+            "provider": config.get("provider"),
+            "model": config.get("model"),
+        }
+
+    embedding_config = settings.get_embedding_config()
+
     return {
         "status": "healthy",
         "version": settings.app_version,
+        "providers": {
+            "llm": llm_providers,
+            "embedding": {
+                "provider": embedding_config.get("provider"),
+                "model": embedding_config.get("model"),
+            },
+            "vertex_available": settings.is_vertex_available(),
+            "openai_available": settings.is_openai_available(),
+        },
     }

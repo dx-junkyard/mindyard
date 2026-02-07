@@ -1,6 +1,25 @@
 version: "3.8"
 
 services:
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    command:
+      - "http"
+      - "--url=${NGHOST}"
+      - "nginx:80" # ngrokはNginxだけを見れば良くなる
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - nginx
+
   # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
@@ -61,6 +80,19 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ENVIRONMENT: development
       DEBUG: "true"
+      # バックエンドから見た自分自身のURLを環境変数で設定
+      API_PUBLIC_URL: https://${NGHOST}/api/v1
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
+      # Google Cloud / Vertex AI
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
+      # LLM Configuration (Multi-Provider)
+      LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
+      LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
+      LLM_CONFIG_FAST: ${LLM_CONFIG_FAST:-}
+      EMBEDDING_CONFIG: ${EMBEDDING_CONFIG:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -72,6 +104,7 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
+      - ./.gcp:/root/.config/gcloud
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Celery Worker
@@ -88,6 +121,16 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Google Cloud / Vertex AI
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
+      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
+      # LLM Configuration (Multi-Provider)
+      LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
+      LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
+      LLM_CONFIG_FAST: ${LLM_CONFIG_FAST:-}
+      EMBEDDING_CONFIG: ${EMBEDDING_CONFIG:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +138,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./.gcp:/root/.config/gcloud
     command: celery -A app.workers.celery_app worker --loglevel=info -Q layer1,layer2,celery
 
   # Frontend (Next.js)
@@ -104,7 +148,9 @@ services:
       dockerfile: Dockerfile
     container_name: mindyard-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      # NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      # フロントエンドから見たAPIの向き先を環境変数で設定
+      - NEXT_PUBLIC_API_URL=https://${NGHOST}/api/v1
     ports:
       - "3000:3000"
     depends_on:

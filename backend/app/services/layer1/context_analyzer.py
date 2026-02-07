@@ -4,10 +4,10 @@ Layer 1: 入力された生ログを解析し、メタデータを付与する
 
 素早いレスポンスが必要なため、FASTモデルを使用。
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-from app.core.config import settings
-from app.core.llm import LLMClient, ModelTier
+from app.core.llm import llm_manager
+from app.core.llm_provider import LLMProvider, LLMUsageRole
 from app.models.raw_log import LogIntent, EmotionTag
 
 
@@ -25,7 +25,17 @@ class ContextAnalyzer:
 
     def __init__(self):
         # FASTモデルを使用（素早い応答が求められるため）
-        self.llm_client = LLMClient(tier=ModelTier.FAST) if settings.openai_api_key else None
+        self._provider: Optional[LLMProvider] = None
+
+    def _get_provider(self) -> Optional[LLMProvider]:
+        """LLMプロバイダーを取得（遅延初期化）"""
+        if self._provider is None:
+            try:
+                self._provider = llm_manager.get_client(LLMUsageRole.FAST)
+            except Exception:
+                # プロバイダーが利用できない場合はNoneを返す
+                pass
+        return self._provider
 
     async def analyze(self, content: str) -> Dict:
         """
@@ -39,20 +49,21 @@ class ContextAnalyzer:
                 "topics": List[str]
             }
         """
-        if not self.llm_client:
-            # OpenAI APIキーがない場合はダミー解析
+        provider = self._get_provider()
+        if not provider:
+            # プロバイダーがない場合はダミー解析
             return self._fallback_analyze(content)
 
         prompt = self._build_analysis_prompt(content)
 
         try:
-            result = await self.llm_client.chat_completion(
+            await provider.initialize()
+            result = await provider.generate_json(
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                json_response=True,
             )
 
             return self._parse_analysis_result(result)
