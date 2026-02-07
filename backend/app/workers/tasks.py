@@ -9,6 +9,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.workers.celery_app import celery_app
 from app.db.base import async_session_maker, engine
@@ -73,6 +74,9 @@ def analyze_log_context(self, log_id: str):
                 log.emotion_scores = analysis.get("emotion_scores")
                 log.topics = analysis.get("topics")
                 log.is_analyzed = True
+
+                # Mark JSON/Array fields as modified to ensure SQLAlchemy detects changes
+                flag_modified(log, "emotion_scores")
 
                 logger.info(f"Committing context analysis for log_id: {log_id}")
                 await session.commit()
@@ -163,7 +167,11 @@ def analyze_log_structure(self, log_id: str):
 
                 # 結果を保存
                 log.structural_analysis = analysis
+                # Explicitly set the completion flag
                 log.is_structure_analyzed = True
+
+                # Mark JSON fields as modified to ensure SQLAlchemy detects changes
+                flag_modified(log, "structural_analysis")
 
                 logger.info(f"Committing structural analysis for log_id: {log_id}")
                 await session.commit()
