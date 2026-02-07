@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import Optional
 import uuid
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,10 +74,13 @@ def analyze_log_context(self, log_id: str):
                 log.emotions = analysis.get("emotions")
                 log.emotion_scores = analysis.get("emotion_scores")
                 log.topics = analysis.get("topics")
+                log.tags = analysis.get("tags")
+                log.metadata_analysis = analysis.get("metadata_analysis")
                 log.is_analyzed = True
 
                 # Mark JSON/Array fields as modified to ensure SQLAlchemy detects changes
                 flag_modified(log, "emotion_scores")
+                flag_modified(log, "metadata_analysis")
 
                 logger.info(f"Committing context analysis for log_id: {log_id}")
                 await session.commit()
@@ -87,6 +91,7 @@ def analyze_log_context(self, log_id: str):
                     "log_id": log_id,
                     "intent": str(log.intent) if log.intent else None,
                     "emotions": log.emotions,
+                    "tags": log.tags,
                 }
 
             except Exception as e:
@@ -247,6 +252,7 @@ def process_log_for_insight(self, log_id: str):
                         "intent": str(log.intent) if log.intent else None,
                         "emotions": log.emotions,
                         "topics": log.topics,
+                        "tags": log.tags,
                     }
                 )
 
