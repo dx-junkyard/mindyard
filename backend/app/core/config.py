@@ -111,7 +111,25 @@ class Settings(BaseSettings):
     sharing_threshold_score: int = 70  # 共有価値スコアの閾値
 
     # CORS
-    cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+
+    @field_validator("backend_cors_origins", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            # Try JSON list first: '["http://localhost:3000", "https://example.com"]'
+            if v.startswith("["):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(item).strip().rstrip("/") for item in parsed]
+                except json.JSONDecodeError:
+                    pass
+            # Fall back to comma-separated: "http://localhost:3000,https://example.com"
+            return [origin.strip().rstrip("/") for origin in v.split(",") if origin.strip()]
+        if isinstance(v, list):
+            return [str(item).strip().rstrip("/") for item in v]
+        return v
 
     # Logging
     log_level: str = "INFO"
