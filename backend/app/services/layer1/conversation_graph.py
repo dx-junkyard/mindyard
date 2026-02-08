@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 from typing import TypedDict
 
 
-class ConversationState(TypedDict, total=False):
+class AgentState(TypedDict, total=False):
     """会話グラフの共有ステート"""
     input_text: str
     intent: str
@@ -50,7 +50,7 @@ class ConversationState(TypedDict, total=False):
 
 # --- Node Functions ---
 
-async def router_node(state: ConversationState) -> ConversationState:
+async def router_node(state: AgentState) -> AgentState:
     """
     Intent Router Node: ユーザー入力を5カテゴリに分類
 
@@ -78,19 +78,19 @@ async def router_node(state: ConversationState) -> ConversationState:
     }
 
 
-async def chat_node(state: ConversationState) -> ConversationState:
+async def chat_node(state: AgentState) -> AgentState:
     """Chit-Chat Node ラッパー"""
     result = await run_chat_node(state)
     return {"response": result["response"]}
 
 
-async def empathy_node(state: ConversationState) -> ConversationState:
+async def empathy_node(state: AgentState) -> AgentState:
     """Empathy Node ラッパー"""
     result = await run_empathy_node(state)
     return {"response": result["response"]}
 
 
-async def knowledge_node(state: ConversationState) -> ConversationState:
+async def knowledge_node(state: AgentState) -> AgentState:
     """Knowledge & Async Trigger Node ラッパー"""
     result = await run_knowledge_node(state)
     update: Dict[str, Any] = {"response": result["response"]}
@@ -99,13 +99,13 @@ async def knowledge_node(state: ConversationState) -> ConversationState:
     return update
 
 
-async def deep_dive_node(state: ConversationState) -> ConversationState:
+async def deep_dive_node(state: AgentState) -> AgentState:
     """Deep-Dive Node ラッパー"""
     result = await run_deep_dive_node(state)
     return {"response": result["response"]}
 
 
-async def brainstorm_node(state: ConversationState) -> ConversationState:
+async def brainstorm_node(state: AgentState) -> AgentState:
     """Brainstorm Node ラッパー"""
     result = await run_brainstorm_node(state)
     return {"response": result["response"]}
@@ -113,7 +113,7 @@ async def brainstorm_node(state: ConversationState) -> ConversationState:
 
 # --- 条件分岐関数 ---
 
-def decide_next_node(state: ConversationState) -> str:
+def decide_next_node(state: AgentState) -> str:
     """Router の結果に基づいて次のノードを決定"""
     intent = state.get("intent", "chat")
     valid_intents = {"chat", "empathy", "knowledge", "deep_dive", "brainstorm"}
@@ -124,9 +124,9 @@ def decide_next_node(state: ConversationState) -> str:
 
 # --- グラフ構築 ---
 
-def build_conversation_graph() -> StateGraph:
+def build_app_graph() -> StateGraph:
     """会話グラフを構築してコンパイル"""
-    workflow = StateGraph(ConversationState)
+    workflow = StateGraph(AgentState)
 
     # ノード登録
     workflow.add_node("router", router_node)
@@ -163,7 +163,7 @@ def build_conversation_graph() -> StateGraph:
 
 
 # コンパイル済みグラフ（シングルトン）
-conversation_graph = build_conversation_graph()
+app_graph = build_app_graph()
 
 
 # --- 実行ヘルパー ---
@@ -184,7 +184,7 @@ async def run_conversation(
     Returns:
         ConversationResponse（即時回答 + Intent Badge + 非同期タスク情報）
     """
-    initial_state: ConversationState = {
+    initial_state: AgentState = {
         "input_text": input_text,
         "user_id": user_id,
         "intent": "",
@@ -195,7 +195,7 @@ async def run_conversation(
     }
 
     # グラフ実行
-    result = await conversation_graph.ainvoke(initial_state)
+    result = await app_graph.ainvoke(initial_state)
 
     # Intent Badge 生成
     intent_value = result.get("intent", "chat")

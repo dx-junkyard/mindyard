@@ -21,7 +21,7 @@ class ConversationIntent(str, Enum):
 
 class ConversationRequest(BaseModel):
     """会話リクエスト"""
-    input_text: str = Field(..., min_length=1, description="ユーザー入力テキスト")
+    message: str = Field(..., min_length=1, description="ユーザー入力テキスト")
     mode_override: Optional[ConversationIntent] = Field(
         None,
         description="モード強制上書き（Mode Switcher機能）",

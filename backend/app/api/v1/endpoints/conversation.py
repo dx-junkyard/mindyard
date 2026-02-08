@@ -31,7 +31,8 @@ async def converse(
     """
     会話エンドポイント: LangGraphで意図を分類し、適切なノードで応答を生成
 
-    - 自動モード: input_textからAIが意図を判定して最適なノードへルーティング
+    リクエスト: {"message": "...", "mode_override": "empathy" (optional)}
+    - 自動モード: messageからAIが意図を判定して最適なノードへルーティング
     - 手動モード: mode_overrideで意図を強制指定（/vent, /idea 等のスラッシュコマンド対応）
 
     レスポンスには以下が含まれる:
@@ -41,7 +42,7 @@ async def converse(
     """
     try:
         result = await run_conversation(
-            input_text=request.input_text,
+            input_text=request.message,
             user_id=str(current_user.id),
             mode_override=request.mode_override.value if request.mode_override else None,
         )

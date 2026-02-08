@@ -126,7 +126,7 @@ export interface BackgroundTask {
 }
 
 export interface ConversationRequest {
-  input_text: string;
+  message: string;
   mode_override?: ConversationIntent;
 }
 

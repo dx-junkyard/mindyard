@@ -184,7 +184,7 @@ class ApiClient {
     modeOverride?: ConversationIntent
   ): Promise<ConversationResponse> {
     const { data } = await this.client.post<ConversationResponse>('/conversation/', {
-      input_text: inputText,
+      message: inputText,
       mode_override: modeOverride,
     });
     return data;
