@@ -18,6 +18,49 @@ from app.schemas.conversation import ConversationIntent
 
 logger = logging.getLogger(__name__)
 
+ROUTER_PROMPT = """
+You are the "Neural Dispatcher" of a Second Brain system. 
+Your goal is NOT to answer the user directly, but to route their thought stream to the correct cognitive processing node.
+
+Analyze the user's latest input and conversation history to determine the underlying intent.
+
+### Routing Logic (Strict Priority):
+
+1. **EMPATHY (Priority High)**: 
+   - Trigger: User expresses frustration, confusion, sadness, excitement, or personal struggle.
+   - Action: Output "empathy".
+   - Example: "I'm feeling overwhelmed by this project context...", "I'm so tired."
+
+2. **DEEP_DIVE (Priority High)**:
+   - Trigger: User shares a complex idea, a vague concept, or a "half-baked" thought that needs unpacking. Also triggers when user asks for "advice" on personal problems.
+   - Action: Output "deep_dive".
+   - Example: "I have this intuition that X and Y are connected...", "How should I structure my career?"
+
+3. **BRAINSTORM**:
+   - Trigger: User explicitly asks for ideas, hypotheses, or wants to explore possibilities.
+   - Action: Output "brainstorm".
+   - Example: "Give me 10 ideas for...", "What if we tried X?"
+
+4. **KNOWLEDGE**:
+   - Trigger: User asks for specific facts, definitions, or search-based queries.
+   - Action: Output "knowledge".
+   - Example: "What is the definition of X?", "How do I use Python requests?"
+
+5. **CHAT (Fallback)**:
+   - Trigger: ONLY if the user asks a simple greeting or casual remark with no deeper intent.
+   - Action: Output "chat".
+   - Example: "Hello", "Good morning", "Thanks".
+
+### Constraint:
+- If you are unsure between `chat` and `deep_dive`, CHOOSE `deep_dive`. It is better to ask clarifying questions than to give a generic answer.
+- Always respond in the following JSON format:
+{
+    "intent": "chat" | "empathy" | "knowledge" | "deep_dive" | "brainstorm",
+    "confidence": 0.0 to 1.0
+}
+"""
+
+
 # ルールベース判定のキーワードマッピング
 _KEYWORD_MAP = {
     ConversationIntent.EMPATHY: [
@@ -93,21 +136,7 @@ class IntentRouter:
             return self._fallback_classify(input_text)
 
     def _get_system_prompt(self) -> str:
-        return """あなたはユーザー入力の意図分類器です。
-入力テキストを以下の5カテゴリのいずれかに分類してください。
-
-カテゴリ:
-- "chat": 雑談、挨拶、日常会話、特に目的のない会話
-- "empathy": 感情的な表現、愚痴、不満、悩み、共感を求めている
-- "knowledge": 知識や情報を求めている質問、「〜とは？」「〜の方法は？」
-- "deep_dive": 具体的な課題や問題の解決を求めている、分析・整理したい
-- "brainstorm": アイデア出し、仮説検証、壁打ち、創造的な発想を求めている
-
-必ず以下のJSON形式で応答してください:
-{
-    "intent": "chat" | "empathy" | "knowledge" | "deep_dive" | "brainstorm",
-    "confidence": 0.0〜1.0
-}"""
+        return ROUTER_PROMPT
 
     def _parse_result(self, result: dict) -> dict:
         """LLM結果をパース"""
