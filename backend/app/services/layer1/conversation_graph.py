@@ -33,6 +33,7 @@ from app.services.layer1.nodes import (
     run_knowledge_node,
     run_deep_dive_node,
     run_brainstorm_node,
+    run_state_node,
 )
 
 logger = get_traced_logger("Graph")
@@ -165,6 +166,7 @@ _ALTERNATIVE_HINTS = {
     "knowledge": "もし事実やデータをサクッと確認したい場合は、そのようにお伝えください。",
     "deep_dive": "もし具体的な課題の整理や解決策の相談をしたい場合は、そのようにおっしゃってくださいね。",
     "brainstorm": "もしこれを起点にアイデアを広げたい場合は、一緒にブレストしましょう。",
+    "state_share": "体調やコンディションを記録したい場合は、そのままお伝えくださいね。",
 }
 
 
@@ -242,6 +244,12 @@ async def brainstorm_node(state: AgentState) -> AgentState:
     result = await _traced_node_wrapper("BrainstormNode", run_brainstorm_node, state)
     response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
     return {"response": response}
+
+
+async def state_share_node(state: AgentState) -> AgentState:
+    """State Share Node ラッパー（コンディション記録）"""
+    result = await _traced_node_wrapper("StateNode", run_state_node, state)
+    return {"response": result["response"]}
 
 
 # --- Probe Node（仮説検証ノード） ---
@@ -373,7 +381,7 @@ async def probe_node(state: AgentState) -> AgentState:
 def decide_next_node(state: AgentState) -> str:
     """Router の結果に基づいて次のノードを決定"""
     intent = state.get("intent", "chat")
-    valid_intents = {"chat", "empathy", "knowledge", "deep_dive", "brainstorm", "probe"}
+    valid_intents = {"chat", "empathy", "knowledge", "deep_dive", "brainstorm", "probe", "state_share"}
     if intent not in valid_intents:
         logger.warning(
             "Transitioning to fallback node",
@@ -397,6 +405,7 @@ def build_app_graph() -> StateGraph:
     workflow.add_node("knowledge", knowledge_node)
     workflow.add_node("deep_dive", deep_dive_node)
     workflow.add_node("brainstorm", brainstorm_node)
+    workflow.add_node("state_share", state_share_node)
     workflow.add_node("probe", probe_node)
 
     # エントリーポイント
@@ -412,6 +421,7 @@ def build_app_graph() -> StateGraph:
             "knowledge": "knowledge",
             "deep_dive": "deep_dive",
             "brainstorm": "brainstorm",
+            "state_share": "state_share",
             "probe": "probe",
         },
     )
@@ -422,6 +432,7 @@ def build_app_graph() -> StateGraph:
     workflow.add_edge("knowledge", END)
     workflow.add_edge("deep_dive", END)
     workflow.add_edge("brainstorm", END)
+    workflow.add_edge("state_share", END)
     workflow.add_edge("probe", END)
 
     return workflow.compile()
