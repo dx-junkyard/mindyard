@@ -83,11 +83,9 @@ services:
       # バックエンドから見た自分自身のURLを環境変数で設定
       API_PUBLIC_URL: ${API_PUBLIC_URL}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
-      # Google Cloud / Vertex AI
+      # Google Cloud / Gen AI (Gemini)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
-      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
-      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
       # LLM Configuration (Multi-Provider)
       LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
       LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
@@ -121,11 +119,9 @@ services:
       QDRANT_HOST: ${QDRANT_HOST}
       QDRANT_PORT: ${QDRANT_PORT}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # Google Cloud / Vertex AI
+      # Google Cloud / Gen AI (Gemini)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
-      VERTEX_PROJECT_ID: ${VERTEX_PROJECT_ID:-}
-      VERTEX_LOCATION: ${VERTEX_LOCATION:-us-central1}
       # LLM Configuration (Multi-Provider)
       LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
       LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
