@@ -57,17 +57,21 @@ class AgentState(TypedDict, total=False):
     hypotheses: Optional[List[str]]      # 迷い中の仮説リスト [primary, secondary]
     previous_evaluation: Optional[str]   # 前回インタラクションの評価
     reasoning: Optional[str]             # ルーターの判断根拠
+    alternative_intent: Optional[str]    # 僅差だった場合の第2候補（補足ヒント用）
 
 
 # --- Node Functions ---
 
 async def router_node(state: AgentState) -> AgentState:
     """
-    Hypothesis-Driven Router Node: 仮説駆動型でユーザー入力を分類
+    Hypothesis-Driven Router Node (Action with Fallback Option)
 
-    1. mode_override が設定されている場合はLLM判定をスキップ（Mode Switcher機能）
-    2. 前回のコンテキストを渡して仮説ベースの分類を実行
-    3. 確信度が低い場合やneeds_probing=trueの場合はPROBEへルーティング
+    判定ロジック:
+    1. mode_override → 強制上書き（Mode Switcher機能）
+    2. primary_confidence < 0.3 → Probe（本当に自信がない場合のみ聞き返す）
+    3. primary - secondary < 0.1 → 1位を採用しつつ alternative_intent を設定
+       → 各Nodeが回答末尾に「もし〇〇のつもりなら〜」の補足を付与
+    4. それ以外 → 1位をそのまま採用
     """
     mode_override = state.get("mode_override")
 
@@ -98,46 +102,81 @@ async def router_node(state: AgentState) -> AgentState:
         prev_context=prev_context,
     )
 
-    # 確信度が低い場合（< 0.6）、またはLLMが明示的にprobingを推奨した場合
-    needs_probing = classification.get("needs_probing", False)
-    primary_confidence = classification.get("primary_confidence", classification["confidence"])
+    primary_conf = classification.get("primary_confidence", classification["confidence"])
+    secondary_conf = classification.get("secondary_confidence", 0.0)
+    primary_intent = classification["primary_intent"]
+    secondary_intent = classification["secondary_intent"]
+    prev_eval = classification.get("previous_evaluation", PreviousEvaluation.NONE)
+    reasoning = classification.get("reasoning", "")
 
-    if needs_probing or primary_confidence < 0.6:
+    # 1. 本当に自信がない場合のみProbe
+    if primary_conf < 0.3:
         return {
             "intent": ConversationIntent.PROBE.value,
-            "confidence": primary_confidence,
-            "hypotheses": [
-                classification["primary_intent"].value,
-                classification["secondary_intent"].value,
-            ],
-            "previous_evaluation": classification.get("previous_evaluation", PreviousEvaluation.NONE).value,
-            "reasoning": classification.get("reasoning", ""),
+            "confidence": primary_conf,
+            "hypotheses": [primary_intent.value, secondary_intent.value],
+            "previous_evaluation": prev_eval.value,
+            "reasoning": reasoning,
         }
 
+    # 2. 僅差の場合: 1位を採用しつつ、2位を代替案として保持
+    alternative_intent = None
+    if (primary_conf - secondary_conf) < 0.1 and secondary_conf > 0.1:
+        alternative_intent = secondary_intent.value
+
     return {
-        "intent": classification["intent"].value,
-        "confidence": primary_confidence,
-        "previous_evaluation": classification.get("previous_evaluation", PreviousEvaluation.NONE).value,
-        "reasoning": classification.get("reasoning", ""),
+        "intent": primary_intent.value,
+        "confidence": primary_conf,
+        "alternative_intent": alternative_intent,
+        "previous_evaluation": prev_eval.value,
+        "reasoning": reasoning,
     }
 
+
+# --- Fallback Hint（代替案の補足メッセージ） ---
+
+# alternative_intent に対応する補足ヒントのマッピング
+# 「もし〇〇のつもりだったら、こう言ってね」を自然な日本語で表現
+_ALTERNATIVE_HINTS = {
+    "chat": "気軽に雑談したい場合は、そのままお話しくださいね。",
+    "empathy": "もしお気持ちを吐き出したい場合は、遠慮なくおっしゃってくださいね。",
+    "knowledge": "もし事実やデータをサクッと確認したい場合は、そのようにお伝えください。",
+    "deep_dive": "もし具体的な課題の整理や解決策の相談をしたい場合は、そのようにおっしゃってくださいね。",
+    "brainstorm": "もしこれを起点にアイデアを広げたい場合は、一緒にブレストしましょう。",
+}
+
+
+def _append_fallback_hint(response: str, alternative_intent: Optional[str]) -> str:
+    """alternative_intent がある場合、回答末尾に補足ヒントを付加する"""
+    if not alternative_intent:
+        return response
+    hint = _ALTERNATIVE_HINTS.get(alternative_intent)
+    if not hint:
+        return response
+    return f"{response}\n\n{hint}"
+
+
+# --- Node Wrappers ---
 
 async def chat_node(state: AgentState) -> AgentState:
     """Chit-Chat Node ラッパー"""
     result = await run_chat_node(state)
-    return {"response": result["response"]}
+    response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
+    return {"response": response}
 
 
 async def empathy_node(state: AgentState) -> AgentState:
     """Empathy Node ラッパー"""
     result = await run_empathy_node(state)
-    return {"response": result["response"]}
+    response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
+    return {"response": response}
 
 
 async def knowledge_node(state: AgentState) -> AgentState:
     """Knowledge & Async Trigger Node ラッパー"""
     result = await run_knowledge_node(state)
-    update: Dict[str, Any] = {"response": result["response"]}
+    response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
+    update: Dict[str, Any] = {"response": response}
     if result.get("background_task_info"):
         update["background_task_info"] = result["background_task_info"]
     return update
@@ -146,13 +185,15 @@ async def knowledge_node(state: AgentState) -> AgentState:
 async def deep_dive_node(state: AgentState) -> AgentState:
     """Deep-Dive Node ラッパー"""
     result = await run_deep_dive_node(state)
-    return {"response": result["response"]}
+    response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
+    return {"response": response}
 
 
 async def brainstorm_node(state: AgentState) -> AgentState:
     """Brainstorm Node ラッパー"""
     result = await run_brainstorm_node(state)
-    return {"response": result["response"]}
+    response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
+    return {"response": response}
 
 
 # --- Probe Node（仮説検証ノード） ---
@@ -346,6 +387,7 @@ async def run_conversation(
         "hypotheses": None,
         "previous_evaluation": None,
         "reasoning": None,
+        "alternative_intent": None,
     }
 
     # グラフ実行
