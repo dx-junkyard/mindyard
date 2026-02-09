@@ -6,6 +6,8 @@ Layer 2: 文脈依存型・構造的理解アップデート機能
 新しいログが「追加情報」「並列（亜種）」「訂正」「新規」のいずれかを判定し、
 構造的理解を動的に更新する。
 
+高感情スコア時は構造分析をスキップし共感メッセージを返す。
+
 深い思考が必要なため、DEEPモデル（reasoning model）を使用。
 """
 from typing import Dict, List, Optional
@@ -14,6 +16,12 @@ import re
 
 from app.core.llm import llm_manager
 from app.core.llm_provider import LLMProvider, LLMUsageRole
+from app.core.logger import get_traced_logger
+
+logger = get_traced_logger("StructuralAnalyzer")
+
+# 感情スコアがこの閾値以上の場合、構造分析をスキップして共感モードに入る
+_EMPATHY_THRESHOLD = 0.6
 
 
 class RelationshipType(str, Enum):
@@ -55,14 +63,19 @@ class StructuralAnalyzer:
         current_log: str,
         recent_history: Optional[List[str]] = None,
         previous_hypothesis: Optional[str] = None,
+        max_emotion_score: float = 0.0,
     ) -> Dict:
         """
         コンテキストを踏まえた構造的分析を実行
+
+        感情スコアが高い場合（>= _EMPATHY_THRESHOLD）は構造分析をスキップし、
+        共感メッセージを返す。
 
         Args:
             current_log: 今回の入力内容
             recent_history: 直近（過去3〜5件分）のログの要約リスト
             previous_hypothesis: 直前のログで導き出された「構造的課題の仮説」
+            max_emotion_score: emotion_scoresの最大値（0.0〜1.0）
 
         Returns:
             {
@@ -73,6 +86,16 @@ class StructuralAnalyzer:
                 "model_info": dict  # 使用したモデル情報
             }
         """
+        # 高感情スコア時は共感モード: 構造分析をスキップ
+        if max_emotion_score >= _EMPATHY_THRESHOLD:
+            logger.info(
+                "Empathy mode activated, skipping structural analysis",
+                metadata={"max_emotion_score": max_emotion_score},
+            )
+            return await self._generate_empathy_response(
+                current_log, previous_hypothesis, max_emotion_score
+            )
+
         provider = self._get_provider()
         if not provider:
             return self._fallback_analyze(current_log, previous_hypothesis)
@@ -98,6 +121,92 @@ class StructuralAnalyzer:
 
         except Exception as e:
             return self._fallback_analyze(current_log, previous_hypothesis)
+
+    # --- 共感モード ---
+
+    _EMPATHY_SYSTEM_PROMPT = """あなたはMINDYARDの共感パートナーです。
+ユーザーは感情的な状態にあります。分析や質問ではなく、共感メッセージを返してください。
+
+ルール:
+- まずユーザーの気持ちを受け止める（「〜ですよね」「大変でしたね」等）
+- アドバイスや分析はしない
+- 「無理しなくていい」「話してくれてありがとう」のような安心感を与える
+- 2〜3文で簡潔に
+- 日本語で応答する
+"""
+
+    async def _generate_empathy_response(
+        self,
+        current_log: str,
+        previous_hypothesis: Optional[str],
+        max_emotion_score: float,
+    ) -> Dict:
+        """
+        高感情スコア時の共感レスポンス生成
+
+        LLMが利用可能ならLLMで自然な共感メッセージを生成し、
+        利用不可の場合はテンプレートフォールバック。
+        """
+        # LLMで共感メッセージを生成
+        provider = self._get_provider()
+        empathy_message = None
+
+        if provider:
+            try:
+                await provider.initialize()
+                result = await provider.generate_text(
+                    messages=[
+                        {"role": "system", "content": self._EMPATHY_SYSTEM_PROMPT},
+                        {"role": "user", "content": current_log},
+                    ],
+                    temperature=0.5,
+                )
+                empathy_message = result.content
+                logger.info(
+                    "Empathy message generated via LLM",
+                    metadata={"response_preview": empathy_message[:100]},
+                )
+            except Exception as e:
+                logger.warning(
+                    "Empathy LLM generation failed, using template",
+                    metadata={"error": str(e)},
+                )
+
+        # テンプレートフォールバック
+        if not empathy_message:
+            empathy_message = self._empathy_fallback_message(current_log)
+
+        # 構造的課題は前回の仮説をそのまま維持（感情時に書き換えない）
+        structural_issue = previous_hypothesis or self._extract_simple_issue(current_log)
+
+        return {
+            "relationship_type": RelationshipType.ADDITIVE.value,
+            "relationship_reason": f"高感情スコア（{max_emotion_score:.2f}）のため共感モードで応答",
+            "updated_structural_issue": structural_issue,
+            "probing_question": empathy_message,
+        }
+
+    def _empathy_fallback_message(self, current_log: str) -> str:
+        """テンプレートベースの共感メッセージ"""
+        # ユーザーの言葉から一部を拾って共感に反映する
+        preview = current_log[:30].replace("\n", " ").strip()
+        if len(current_log) > 30:
+            preview += "..."
+
+        # ネガティブ感情キーワードの検出
+        high_stress_keywords = ["疲れ", "辛", "つら", "しんど", "無理", "限界", "もうダメ", "嫌"]
+        is_high_stress = any(kw in current_log for kw in high_stress_keywords)
+
+        if is_high_stress:
+            return (
+                f"「{preview}」…大変な状況の中、話してくれてありがとうございます。"
+                "無理に整理しなくても大丈夫です。まずはお気持ちをそのまま吐き出してくださいね。"
+            )
+
+        return (
+            f"「{preview}」…気持ちが揺れているんですね。"
+            "その感覚、大切にしてください。落ち着いたら、一緒に整理していきましょう。"
+        )
 
     def _get_system_prompt(self) -> str:
         return """あなたはMINDYARDの構造的分析エンジンです。
