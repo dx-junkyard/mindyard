@@ -179,11 +179,18 @@ def analyze_log_structure(self, log_id: str):
                         summary += "..."
                     recent_history.append(summary)
 
-                # Step 4: StructuralAnalyzer 実行
+                # Step 4: 感情スコアの最大値を取得
+                max_emotion_score = 0.0
+                if log.emotion_scores and isinstance(log.emotion_scores, dict):
+                    scores = log.emotion_scores.values()
+                    max_emotion_score = max(scores) if scores else 0.0
+
+                # Step 5: StructuralAnalyzer 実行
                 analysis = await structural_analyzer.analyze(
                     current_log=log.content,
                     recent_history=recent_history if recent_history else None,
                     previous_hypothesis=previous_hypothesis,
+                    max_emotion_score=max_emotion_score,
                 )
 
                 # 結果を保存
