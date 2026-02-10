@@ -22,6 +22,7 @@ class ConversationIntent(str, Enum):
     DEEP_DIVE = "deep_dive"    # 課題解決・深掘り
     BRAINSTORM = "brainstorm"  # 発想・アイデア出し
     PROBE = "probe"            # 意図確認・仮説検証モード
+    STATE_SHARE = "state_share"  # コンディション・状態記録
 
 
 class PreviousEvaluation(str, Enum):
@@ -111,5 +112,9 @@ INTENT_DISPLAY_MAP = {
     ConversationIntent.PROBE: {
         "label": "意図を確認中...",
         "icon": "radar",
+    },
+    ConversationIntent.STATE_SHARE: {
+        "label": "コンディション記録",
+        "icon": "battery_charging_full",
     },
 }

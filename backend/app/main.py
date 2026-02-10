@@ -155,7 +155,7 @@ async def health_check():
                 "provider": embedding_config.get("provider"),
                 "model": embedding_config.get("model"),
             },
-            "vertex_available": settings.is_vertex_available(),
+            "google_genai_available": settings.is_google_genai_available(),
             "openai_available": settings.is_openai_available(),
         },
     }

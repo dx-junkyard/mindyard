@@ -14,7 +14,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.workers.celery_app import celery_app
 from app.db.base import async_session_maker, engine
-from app.models.raw_log import RawLog
+from app.models.raw_log import RawLog, LogIntent
 from app.models.insight import InsightCard, InsightStatus
 from app.services.layer1.context_analyzer import context_analyzer
 from app.services.layer2.privacy_sanitizer import privacy_sanitizer
@@ -128,6 +128,29 @@ def analyze_log_structure(self, log_id: str):
             if log.is_structure_analyzed:
                 logger.info(f"Log already analyzed for structure: {log_id}")
                 return {"status": "skipped", "message": "Already analyzed for structure"}
+
+            # 状態ログは構造分析をスキップし、マイクロフィードバックを返す
+            if log.intent == LogIntent.STATE or log.intent == "state":
+                logger.info(f"Generating micro-feedback for state log: {log_id}")
+                try:
+                    analysis = await structural_analyzer.generate_state_feedback(
+                        content=log.content,
+                        emotions=log.emotions,
+                    )
+                    log.structural_analysis = analysis
+                    log.is_structure_analyzed = True
+                    flag_modified(log, "structural_analysis")
+                    await session.commit()
+                    logger.info(f"State micro-feedback saved for log_id: {log_id}")
+                    return {
+                        "status": "success",
+                        "log_id": log_id,
+                        "relationship_type": analysis.get("relationship_type"),
+                        "probing_question": analysis.get("probing_question"),
+                    }
+                except Exception as e:
+                    logger.error(f"Error generating state feedback for {log_id}: {str(e)}", exc_info=True)
+                    return {"status": "error", "message": str(e)}
 
             try:
                 logger.info(f"Starting structural analysis for log_id: {log_id}")
