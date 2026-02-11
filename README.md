@@ -136,6 +136,9 @@ gcloud services enable aiplatform.googleapis.com
 
 # アプリケーション用の認証ファイル(ADC)を作成（再度URL認証が必要な場合があります）
 gcloud auth application-default login
+
+# アクセス権付与
+sudo chmod -R 755 .gcp
 ```
 
 **2. 環境変数の設定**
