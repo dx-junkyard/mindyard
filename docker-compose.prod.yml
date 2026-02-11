@@ -67,7 +67,7 @@ services:
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
       # Google Cloud / Gen AI (Gemini)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/.config/gcloud/application_default_credentials.json
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/.config/gcloud/application_default_credentials.json
       # LLM Configuration (Multi-Provider)
       LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
       LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
@@ -82,7 +82,7 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
-      - ./.gcp:/root/.config/gcloud
+      - ./.gcp:/gcp/.config/gcloud
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # Celery Worker
@@ -101,7 +101,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Google Cloud / Gen AI (Gemini)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/.config/gcloud/application_default_credentials.json
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/.config/gcloud/application_default_credentials.json
       # LLM Configuration (Multi-Provider)
       LLM_CONFIG_DEEP: ${LLM_CONFIG_DEEP:-}
       LLM_CONFIG_BALANCED: ${LLM_CONFIG_BALANCED:-}
@@ -112,7 +112,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - ./.gcp:/root/.config/gcloud
+      - ./.gcp:/gcp/.config/gcloud
     command: celery -A app.workers.celery_app worker --loglevel=info -Q layer1,layer2,celery
 
   # Frontend (Next.js)
