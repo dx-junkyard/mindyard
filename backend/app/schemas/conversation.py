@@ -57,6 +57,10 @@ class ConversationRequest(BaseModel):
         None,
         description="モード強制上書き（Mode Switcher機能）",
     )
+    research_approved: bool = Field(
+        False,
+        description="Deep Research の実行をユーザーが承認した場合 True",
+    )
 
 
 class IntentBadge(BaseModel):
@@ -85,6 +89,10 @@ class ConversationResponse(BaseModel):
     )
     user_id: str
     timestamp: datetime = Field(default_factory=datetime.now)
+    requires_research_consent: bool = Field(
+        default=False,
+        description="Deep Research の提案が含まれている場合 True",
+    )
 
 
 # Intent Badge のラベル・アイコン定義

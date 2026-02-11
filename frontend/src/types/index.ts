@@ -73,6 +73,7 @@ export interface AckResponse {
   transcribed_text?: string;  // 音声入力時の文字起こしテキスト
   skip_structural_analysis?: boolean;
   conversation_reply?: string; // 会話エージェントが生成した自然な返答（ラリー用）
+  requires_research_consent?: boolean; // Deep Research の提案が含まれている場合 true
 }
 
 // Insight Card (Layer 3)
@@ -144,6 +145,7 @@ export interface BackgroundTask {
 export interface ConversationRequest {
   message: string;
   mode_override?: ConversationIntent;
+  research_approved?: boolean; // Deep Research を承認する場合 true
 }
 
 export interface ConversationResponse {
@@ -152,6 +154,7 @@ export interface ConversationResponse {
   background_task: BackgroundTask | null;
   user_id: string;
   timestamp: string;
+  requires_research_consent?: boolean; // Deep Research の提案が含まれている場合 true
 }
 
 // Recommendations

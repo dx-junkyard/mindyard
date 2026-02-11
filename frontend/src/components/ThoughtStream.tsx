@@ -7,7 +7,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import Link from 'next/link';
-import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useRecommendationStore, useConversationStore, rawLogToMessages } from '@/lib/store';
 import type { ChatMessage } from '@/lib/store';
@@ -51,6 +51,7 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
   const [analysisSteps, setAnalysisSteps] = useState<AnalysisStep[]>([]);
   const [isAnalysisExpanded, setIsAnalysisExpanded] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [isResearching, setIsResearching] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<NodeJS.Timeout>();
@@ -319,6 +320,7 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
         content: replyContent,
         timestamp: new Date().toISOString(),
         logId: response.log_id,
+        requiresResearchConsent: response.requires_research_consent,
       };
 
       addMessage(replyMessage);
@@ -376,6 +378,60 @@ MINDYARD で思考を整理しました`;
       console.error('コピーに失敗しました:', error);
     }
   }, []);
+
+  // Deep Research 実行ハンドラ
+  const handleDeepResearch = useCallback(async (message: ChatMessage) => {
+    if (isResearching) return;
+
+    setIsResearching(true);
+
+    // 「調査中...」メッセージを表示
+    const researchingMessage: ChatMessage = {
+      id: `researching-${Date.now()}`,
+      type: 'system',
+      content: 'Deep Research を実行中です...',
+      timestamp: new Date().toISOString(),
+    };
+    addMessage(researchingMessage);
+
+    try {
+      // 元のメッセージの内容を使って Deep Research を実行
+      // message.logId に紐づくユーザー入力を見つける
+      const userMsg = messages.find(
+        (m) => m.logId === message.logId && m.type === 'user'
+      );
+      const queryText = userMsg?.content || message.content;
+
+      const result = await api.converse(queryText, undefined, true);
+
+      // 「調査中...」メッセージを除去してリサーチ結果を追加
+      const researchResultMessage: ChatMessage = {
+        id: `research-result-${Date.now()}`,
+        type: 'assistant',
+        content: result.response,
+        timestamp: new Date().toISOString(),
+      };
+
+      setMessages([
+        ...messages.filter((m) => !m.id.startsWith('researching-')),
+        researchResultMessage,
+      ]);
+    } catch (error) {
+      console.error('Deep Research エラー:', error);
+      const errorMsg: ChatMessage = {
+        id: `research-error-${Date.now()}`,
+        type: 'system',
+        content: 'Deep Research の実行に失敗しました。もう一度お試しください。',
+        timestamp: new Date().toISOString(),
+      };
+      setMessages([
+        ...messages.filter((m) => !m.id.startsWith('researching-')),
+        errorMsg,
+      ]);
+    } finally {
+      setIsResearching(false);
+    }
+  }, [isResearching, messages, addMessage, setMessages]);
 
   // キーボードショートカット
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -599,6 +655,15 @@ MINDYARD で思考を整理しました`;
               </div>
             )}
             <p className="whitespace-pre-wrap">{message.content}</p>
+            {message.type === 'assistant' && message.requiresResearchConsent && !isResearching && (
+              <button
+                onClick={() => handleDeepResearch(message)}
+                className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 transition-colors shadow-sm"
+              >
+                <Search className="w-4 h-4" />
+                Deep Research を実行する
+              </button>
+            )}
             {message.type === 'ai-question' && message.structuralAnalysis && (
               <details className="mt-2 pt-2 border-t border-gray-200">
                 <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-500">
@@ -629,6 +694,13 @@ MINDYARD で思考を整理しました`;
           <div className="mr-auto bg-gray-100 rounded-lg p-3 flex items-center gap-2 text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>受け取っています...</span>
+          </div>
+        )}
+
+        {isResearching && (
+          <div className="mr-auto bg-indigo-50 border border-indigo-100 rounded-lg p-3 flex items-center gap-2 text-indigo-600">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Deep Research を実行中...</span>
           </div>
         )}
 

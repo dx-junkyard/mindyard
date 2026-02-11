@@ -34,6 +34,7 @@ from app.services.layer1.nodes import (
     run_deep_dive_node,
     run_brainstorm_node,
     run_state_node,
+    run_deep_research_node,
 )
 
 logger = get_traced_logger("Graph")
@@ -60,6 +61,9 @@ class AgentState(TypedDict, total=False):
     previous_evaluation: Optional[str]   # 前回インタラクションの評価
     reasoning: Optional[str]             # ルーターの判断根拠
     alternative_intent: Optional[str]    # 僅差だった場合の第2候補（補足ヒント用）
+    # Deep Research フロー
+    requires_research_consent: Optional[bool]  # リサーチ提案が必要な場合 True
+    research_approved: Optional[bool]          # ユーザーがリサーチを承認した場合 True
 
 
 # --- Node Functions ---
@@ -208,11 +212,77 @@ async def _traced_node_wrapper(
     return result
 
 
+# --- Deep Research 判定 ---
+
+_RESEARCH_ASSESSMENT_PROMPT = """以下のユーザーの質問と、それに対する回答を読んでください。
+この回答の後に「さらに深いリサーチ（論文検索、最新データ収集、複数情報源の横断調査等）」を行うことで、
+ユーザーにとってより大きな価値が得られるかどうかを判定してください。
+
+判定基準:
+- 一般的な知識で十分に回答できている → false
+- 最新のデータや統計、専門的な文献があればより良い回答になる → true
+- 回答に「〜と考えられています」「詳細は不明ですが」等の不確実な表現が多い → true
+- 複数の情報源を横断的に調べることで、より包括的な視点を提供できる → true
+- 単なる雑談や感情表現に対する応答 → false
+
+必ず以下のJSON形式で応答してください:
+{
+    "should_propose_research": true | false,
+    "reason": "判定理由（日本語・1文）"
+}"""
+
+
+async def _assess_research_value(
+    input_text: str, response_text: str
+) -> bool:
+    """回答内容がさらに深いリサーチの価値があるかを LLM で判定"""
+    try:
+        provider = llm_manager.get_client(LLMUsageRole.FAST)
+        if not provider:
+            return False
+        await provider.initialize()
+        result = await provider.generate_json(
+            messages=[
+                {"role": "system", "content": _RESEARCH_ASSESSMENT_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"ユーザーの入力:\n{input_text}\n\nAIの回答:\n{response_text}",
+                },
+            ],
+            temperature=0.1,
+        )
+        should_propose = bool(result.get("should_propose_research", False))
+        _node_logger.info(
+            "Research assessment",
+            metadata={
+                "should_propose": should_propose,
+                "reason": result.get("reason", ""),
+            },
+        )
+        return should_propose
+    except Exception as e:
+        _node_logger.warning(
+            "Research assessment failed",
+            metadata={"error": str(e)},
+        )
+        return False
+
+
+_RESEARCH_PROPOSAL_SUFFIX = (
+    "\n\n---\nこのトピックについて、さらに詳しく調査することもできます。"
+    "Deep Research を実行しますか？"
+)
+
+
 async def chat_node(state: AgentState) -> AgentState:
     """Chit-Chat Node ラッパー"""
     result = await _traced_node_wrapper("ChatNode", run_chat_node, state)
     response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
-    return {"response": response}
+    # Deep Research 判定（chat は基本的に不要だが、知的な話題では提案する）
+    requires_consent = await _assess_research_value(state.get("input_text", ""), response)
+    if requires_consent:
+        response += _RESEARCH_PROPOSAL_SUFFIX
+    return {"response": response, "requires_research_consent": requires_consent}
 
 
 async def empathy_node(state: AgentState) -> AgentState:
@@ -229,6 +299,11 @@ async def knowledge_node(state: AgentState) -> AgentState:
     update: Dict[str, Any] = {"response": response}
     if result.get("background_task_info"):
         update["background_task_info"] = result["background_task_info"]
+    # Deep Research 判定
+    requires_consent = await _assess_research_value(state.get("input_text", ""), response)
+    if requires_consent:
+        update["response"] = response + _RESEARCH_PROPOSAL_SUFFIX
+    update["requires_research_consent"] = requires_consent
     return update
 
 
@@ -236,7 +311,11 @@ async def deep_dive_node(state: AgentState) -> AgentState:
     """Deep-Dive Node ラッパー"""
     result = await _traced_node_wrapper("DeepDiveNode", run_deep_dive_node, state)
     response = _append_fallback_hint(result["response"], state.get("alternative_intent"))
-    return {"response": response}
+    # Deep Research 判定
+    requires_consent = await _assess_research_value(state.get("input_text", ""), response)
+    if requires_consent:
+        response += _RESEARCH_PROPOSAL_SUFFIX
+    return {"response": response, "requires_research_consent": requires_consent}
 
 
 async def brainstorm_node(state: AgentState) -> AgentState:
@@ -249,6 +328,14 @@ async def brainstorm_node(state: AgentState) -> AgentState:
 async def state_share_node(state: AgentState) -> AgentState:
     """State Share Node ラッパー（コンディション記録）"""
     result = await _traced_node_wrapper("StateNode", run_state_node, state)
+    return {"response": result["response"]}
+
+
+async def deep_research_node(state: AgentState) -> AgentState:
+    """Deep Research Node ラッパー（Gemini API による詳細リサーチ）"""
+    result = await _traced_node_wrapper(
+        "DeepResearchNode", run_deep_research_node, state
+    )
     return {"response": result["response"]}
 
 
@@ -380,6 +467,11 @@ async def probe_node(state: AgentState) -> AgentState:
 
 def decide_next_node(state: AgentState) -> str:
     """Router の結果に基づいて次のノードを決定"""
+    # research_approved が True の場合、直接 deep_research ノードへ
+    if state.get("research_approved"):
+        logger.info("Transitioning to deep_research node (user approved)")
+        return "deep_research"
+
     intent = state.get("intent", "chat")
     valid_intents = {"chat", "empathy", "knowledge", "deep_dive", "brainstorm", "probe", "state_share"}
     if intent not in valid_intents:
@@ -407,11 +499,13 @@ def build_app_graph() -> StateGraph:
     workflow.add_node("brainstorm", brainstorm_node)
     workflow.add_node("state_share", state_share_node)
     workflow.add_node("probe", probe_node)
+    workflow.add_node("deep_research", deep_research_node)
 
     # エントリーポイント
     workflow.set_entry_point("router")
 
     # 条件付きエッジ: router → 各ノード
+    # research_approved の場合は deep_research に直接ルーティング
     workflow.add_conditional_edges(
         "router",
         decide_next_node,
@@ -423,6 +517,7 @@ def build_app_graph() -> StateGraph:
             "brainstorm": "brainstorm",
             "state_share": "state_share",
             "probe": "probe",
+            "deep_research": "deep_research",
         },
     )
 
@@ -434,6 +529,7 @@ def build_app_graph() -> StateGraph:
     workflow.add_edge("brainstorm", END)
     workflow.add_edge("state_share", END)
     workflow.add_edge("probe", END)
+    workflow.add_edge("deep_research", END)
 
     return workflow.compile()
 
@@ -450,6 +546,7 @@ async def run_conversation(
     mode_override: Optional[str] = None,
     previous_intent: Optional[str] = None,
     previous_response: Optional[str] = None,
+    research_approved: bool = False,
 ) -> ConversationResponse:
     """
     会話グラフを実行し、ConversationResponse を返す
@@ -460,6 +557,7 @@ async def run_conversation(
         mode_override: モード強制上書き（Mode Switcher）
         previous_intent: 前回の意図（仮説検証用）
         previous_response: 前回のAI回答（仮説検証用）
+        research_approved: ユーザーが Deep Research を承認した場合 True
 
     Returns:
         ConversationResponse（即時回答 + Intent Badge + 非同期タスク情報）
@@ -470,6 +568,7 @@ async def run_conversation(
             "input_preview": input_text[:80],
             "user_id": user_id,
             "mode_override": mode_override,
+            "research_approved": research_approved,
         },
     )
     conv_start = time.monotonic()
@@ -489,6 +588,9 @@ async def run_conversation(
         "previous_evaluation": None,
         "reasoning": None,
         "alternative_intent": None,
+        # Deep Research フロー
+        "requires_research_consent": None,
+        "research_approved": research_approved or None,
     }
 
     # グラフ実行
@@ -525,6 +627,7 @@ async def run_conversation(
         intent_badge=intent_badge,
         background_task=background_task,
         user_id=user_id,
+        requires_research_consent=bool(result.get("requires_research_consent")),
     )
 
     duration_ms = round((time.monotonic() - conv_start) * 1000, 1)
@@ -534,6 +637,7 @@ async def run_conversation(
             "intent": intent_enum.value,
             "confidence": intent_badge.confidence,
             "has_background_task": background_task is not None,
+            "requires_research_consent": conv_response.requires_research_consent,
             "duration_ms": duration_ms,
         },
     )

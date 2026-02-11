@@ -86,6 +86,7 @@ export interface ChatMessage {
     model_info?: { tier: string; model: string; is_reasoning: boolean };
   };
   isVoiceInput?: boolean;
+  requiresResearchConsent?: boolean; // Deep Research 提案フラグ
 }
 
 /** RawLog → ChatMessage[] 変換（バックエンドのログを会話メッセージに復元） */

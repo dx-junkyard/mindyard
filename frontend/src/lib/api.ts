@@ -189,12 +189,17 @@ class ApiClient {
   // Conversation (LangGraph Dynamic Routing)
   async converse(
     inputText: string,
-    modeOverride?: ConversationIntent
+    modeOverride?: ConversationIntent,
+    researchApproved?: boolean
   ): Promise<ConversationResponse> {
-    const { data } = await this.client.post<ConversationResponse>('/conversation/', {
+    const body: Record<string, unknown> = {
       message: inputText,
       mode_override: modeOverride,
-    });
+    };
+    if (researchApproved) {
+      body.research_approved = true;
+    }
+    const { data } = await this.client.post<ConversationResponse>('/conversation/', body);
     return data;
   }
 
