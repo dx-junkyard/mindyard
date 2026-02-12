@@ -16,14 +16,14 @@ import { useAuthStore, useNotificationStore } from '@/lib/store';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-const POLL_INTERVAL_MS = 30_000; // 30秒ごとに承認待ちをチェック
+const POLL_INTERVAL_MS = 30_000; // 30秒ごとに推奨インサイトをチェック
 
 export function Navigation() {
   const pathname = usePathname();
   const { user, isAuthenticated, logout } = useAuthStore();
   const { pendingProposalCount, setPendingProposalCount } = useNotificationStore();
 
-  // 承認待ちインサイトの件数をポーリング
+  // 推奨インサイトの件数をポーリング
   const fetchPendingCount = useCallback(async () => {
     if (!isAuthenticated) return;
     try {

@@ -2,7 +2,7 @@
 
 /**
  * MINDYARD - Sharing Proposals Page
- * Layer 2: 共有提案の一覧と承認
+ * Layer 2: 推奨インサイトの一覧と承認
  */
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -76,9 +76,9 @@ export default function ProposalsPage() {
     <div className="max-w-3xl mx-auto px-4 py-8">
       {/* ヘッダー */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-800 mb-2">共有提案</h1>
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">共有の推奨</h1>
         <p className="text-gray-500">
-          あなたの経験をチームに共有しませんか？
+          AIがあなたの知見に共有価値を見出しました。チームに共有しませんか？
         </p>
       </div>
 
@@ -94,9 +94,9 @@ export default function ProposalsPage() {
       ) : proposals?.length === 0 ? (
         <div className="text-center py-12">
           <Inbox className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500">現在、共有提案はありません</p>
+          <p className="text-gray-500">現在、推奨はありません</p>
           <p className="text-sm text-gray-400 mt-2">
-            記録を続けると、共有価値の高い知見が自動的に提案されます
+            記録を続けると、共有価値の高い知見がAIから推奨されます
           </p>
         </div>
       ) : (

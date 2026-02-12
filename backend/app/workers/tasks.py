@@ -296,9 +296,9 @@ def process_log_for_insight(self, log_id: str):
                 should_propose = evaluation.get("should_propose", False)
 
                 # Step 4: ステータス判定
-                #   score >= 70 → 共有を推奨 (PENDING_APPROVAL)
-                #   score <  70 → 下書き (DRAFT)
-                #   ※ 自動公開は行わない。公開はユーザーの承認が必須。
+                #   score >= 80 → 推奨（ユーザーに共有を提案）
+                #   score <  80 → 通常（保存のみ）
+                #   ※ 公開はユーザーの承認が必須。自動公開は行わない。
                 if should_propose:
                     insight_status = InsightStatus.PENDING_APPROVAL
                 else:
@@ -329,11 +329,11 @@ def process_log_for_insight(self, log_id: str):
 
                 await session.refresh(insight)
 
-                promotion_type = "pending_approval" if should_propose else "draft"
+                promotion_type = "推奨" if should_propose else "通常"
                 logger.info(
                     f"Insight pipeline complete: log_id={log_id}, "
                     f"insight_id={insight.id}, score={sharing_score}, "
-                    f"promotion={promotion_type}"
+                    f"type={promotion_type}"
                 )
 
                 return {
