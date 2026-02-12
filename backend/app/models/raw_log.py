@@ -33,12 +33,15 @@ class LogIntent(str, Enum):
     - LOG: 単に記録したい
     - VENT: 愚痴を言いたい
     - STRUCTURE: 整理したい
+    - STATE: コンディション・状態記録
+    - DEEP_RESEARCH: AIによる能動的な調査・リサーチ
     """
 
     LOG = "log"
     VENT = "vent"
     STRUCTURE = "structure"
     STATE = "state"  # コンディション・状態記録
+    DEEP_RESEARCH = "deep_research"  # Deep Research 依頼
 
 
 class EmotionTag(str, Enum):
