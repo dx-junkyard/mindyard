@@ -4,9 +4,12 @@ Layer 1: 自然な人間らしい会話返答を生成する
 
 ai-agent-playground-101 方式: シンプルなプロンプト + 会話履歴 → 自然な応答
 ルールは最小限にし、LLM の自然な対話能力に任せる。
+
+Layer 3 連携: 会話中にQdrant（みんなの知恵）を検索し、
+関連するインサイトがあれば自然な会話の中で言及する。
 """
 import logging
-from typing import Optional, List, Tuple, TYPE_CHECKING
+from typing import Optional, List, Tuple, Dict, TYPE_CHECKING
 
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm import llm_manager
 from app.core.llm_provider import LLMProvider, LLMUsageRole
 from app.models.raw_log import RawLog
+from app.services.layer3.knowledge_store import knowledge_store
 
 if TYPE_CHECKING:
     from app.services.layer1.situation_router import SituationResult
@@ -72,6 +76,14 @@ _TALK_SYSTEM_PROMPT = """\
 良い例:
   入力「新しいプロジェクトを任された」
   →「おめでとうございます。任されるということは期待の表れですね。今の段階で一番気になっているのは、技術的な部分ですか？それともチーム編成や進め方の部分ですか？」
+
+## みんなの知恵（チームの過去の知見）が提供された場合
+- システムメッセージに【みんなの知恵】セクションが含まれることがある。
+- その場合、会話の流れに自然に溶け込む形で**さりげなく言及**する。
+- 「似た経験をした方がいて〜」「チーム内でこんな知見があるのですが〜」のように、
+  押し付けず、会話の中で自然に共有する。具体的な内容（解決策やポイント）を含めること。
+- 関連度が低い場合や会話の流れに合わない場合は無理に言及しない。
+- 「誰が」とは言わない（匿名）。
 
 ## 文体
 です・ます調。知的で親しみやすく、対等な立場で。"""
@@ -143,6 +155,14 @@ _DO_SYSTEM_PROMPT = """\
   ⚠️ 罠: Supabase の RLS を忘れると全データ公開になる。
   確認: Supabase ダッシュボード → Authentication → Policies で各テーブルにポリシーがあるか確認。」
 
+## みんなの知恵（チームの過去の知見）が提供された場合
+- システムメッセージに【みんなの知恵】セクションが含まれることがある。
+- その場合、回答の手順やコード例に**チームの実績として具体的に組み込む**。
+- 「チーム内で以前〜で成功した実績があります」のように根拠として使う。
+- 知見の解決策やポイントが使える場合は、手順の中で積極的に引用する。
+- 関連度が低い場合は無理に言及しない。
+- 「誰が」とは言わない（匿名）。
+
 ## 文体
 です・ます調。簡潔で的確。余計な前置き・感想は最小限に。"""
 
@@ -177,6 +197,9 @@ class ConversationAgent:
         """
         会話履歴と新しい発話をまとめて LLM に送り、自然な返答を得る。
         ai-agent-playground-101 方式: 履歴 + 発話 → LLM → 返答。シンプル。
+
+        Layer 3 連携: ユーザーの入力で Qdrant を検索し、
+        関連インサイトがあればシステムプロンプトに注入する。
         """
         provider = self._get_provider()
         if not provider:
@@ -187,7 +210,14 @@ class ConversationAgent:
             session, user_id, new_log.id,
             thread_id=getattr(new_log, "thread_id", None),
         )
-        messages = self._build_messages(new_log.content, history, situation)
+
+        # ── Layer 3: みんなの知恵を検索 ──
+        related_insights = await self._search_collective_wisdom(new_log.content)
+
+        messages = self._build_messages(
+            new_log.content, history, situation,
+            related_insights=related_insights,
+        )
 
         try:
             await provider.initialize()
@@ -275,6 +305,7 @@ class ConversationAgent:
         new_content: str,
         history: List[Tuple[str, Optional[str]]],
         situation: Optional["SituationResult"] = None,
+        related_insights: Optional[List[Dict]] = None,
     ) -> List[dict]:
         """
         LLM に送るメッセージ配列を構築する。
@@ -284,6 +315,9 @@ class ConversationAgent:
 
         短い発話（命令形など）+ 履歴がある場合は、直近ログの要約を
         システムプロンプトに注入して LLM が文脈を確実に把握できるようにする。
+
+        Layer 3 連携: related_insights が渡された場合、
+        「みんなの知恵」としてシステムプロンプトに注入する。
         """
         # ── Do / Talk モード切り替え ──
         is_do = situation.do_mode if situation else False
@@ -307,6 +341,12 @@ class ConversationAgent:
                     f"「何についてですか？」のような聞き返しは禁止。\n\n"
                     f"{context_summary}"
                 )
+
+        # ── Layer 3: みんなの知恵を注入 ──
+        if related_insights:
+            wisdom_text = self._format_collective_wisdom(related_insights)
+            if wisdom_text:
+                system_prompt += f"\n\n{wisdom_text}"
 
         messages: List[dict] = [{"role": "system", "content": system_prompt}]
 
@@ -406,6 +446,72 @@ class ConversationAgent:
                 f"前回の会話内容を踏まえて、まだ掘り下げていない角度から話を広げてください。"
             )
         return None
+
+    # ════════════════════════════════════════
+    # Layer 3 連携: みんなの知恵
+    # ════════════════════════════════════════
+
+    async def _search_collective_wisdom(
+        self,
+        user_content: str,
+        limit: int = 2,
+        score_threshold: float = 0.70,
+    ) -> List[Dict]:
+        """
+        ユーザーの入力を使って Qdrant（みんなの知恵）を検索する。
+        関連度が高いインサイトだけを返す。
+        """
+        # 短すぎる入力では検索しない（ノイズ回避）
+        if len(user_content.strip()) < 10:
+            return []
+
+        try:
+            results = await knowledge_store.search_similar(
+                query=user_content,
+                limit=limit,
+                score_threshold=score_threshold,
+            )
+            if results:
+                logger.info(
+                    "Collective wisdom: found %d insights (threshold=%.2f) for: %.30s...",
+                    len(results), score_threshold, user_content,
+                )
+            return results
+        except Exception as e:
+            logger.debug("Collective wisdom search failed (non-critical): %s", e)
+            return []
+
+    @staticmethod
+    def _format_collective_wisdom(insights: List[Dict]) -> Optional[str]:
+        """
+        検索結果を LLM のシステムプロンプトに注入する形式にフォーマットする。
+        """
+        if not insights:
+            return None
+
+        lines = [
+            "【みんなの知恵 — チーム内の過去の知見】",
+            "以下はユーザーの話題に関連する、チーム内の匿名化された知見です。",
+            "会話に自然に溶け込む形でさりげなく共有してください。",
+            "押し付けず、関連する場合のみ言及すること。\n",
+        ]
+        for i, ins in enumerate(insights, 1):
+            title = ins.get("title", "（タイトルなし）")
+            summary = ins.get("summary", "")
+            topics = ", ".join(ins.get("topics", []))
+            score = round(ins.get("score", 0) * 100)
+
+            lines.append(f"  {i}. 「{title}」（関連度 {score}%）")
+            if summary:
+                # 長すぎるサマリーは切り詰め
+                if len(summary) > 200:
+                    summary = summary[:200] + "…"
+                lines.append(f"     要約: {summary}")
+            if topics:
+                lines.append(f"     トピック: {topics}")
+            lines.append("")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _guess_topic(
