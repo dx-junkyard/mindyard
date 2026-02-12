@@ -21,6 +21,7 @@ from app.services.layer2.privacy_sanitizer import privacy_sanitizer
 from app.services.layer2.insight_distiller import insight_distiller
 from app.services.layer2.sharing_broker import sharing_broker
 from app.services.layer2.structural_analyzer import structural_analyzer, is_continuation_phrase
+from app.services.layer3.knowledge_store import knowledge_store
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -292,7 +293,22 @@ def process_log_for_insight(self, log_id: str):
                 # Step 3: Sharing Broker - 評価
                 evaluation = await sharing_broker.evaluate_sharing_value(distilled)
 
-                # Step 4: InsightCard を作成
+                sharing_score = evaluation.get("sharing_value_score", 0)
+                auto_publish = evaluation.get("auto_publish", False)
+                should_propose = evaluation.get("should_propose", False)
+
+                # Step 4: ステータス判定
+                #   score >= 80 → 自動公開 (APPROVED)
+                #   score >= 70 → 承認待ち (PENDING_APPROVAL)
+                #   score <  70 → 下書き (DRAFT)
+                if auto_publish:
+                    insight_status = InsightStatus.APPROVED
+                elif should_propose:
+                    insight_status = InsightStatus.PENDING_APPROVAL
+                else:
+                    insight_status = InsightStatus.DRAFT
+
+                from datetime import datetime, timezone
                 insight = InsightCard(
                     author_id=log.user_id,
                     source_log_id=log.id,
@@ -303,14 +319,11 @@ def process_log_for_insight(self, log_id: str):
                     summary=distilled.get("summary", ""),
                     topics=distilled.get("topics"),
                     tags=distilled.get("tags"),
-                    sharing_value_score=evaluation.get("sharing_value_score", 0),
+                    sharing_value_score=sharing_score,
                     novelty_score=evaluation.get("novelty_score", 0),
                     generality_score=evaluation.get("generality_score", 0),
-                    status=(
-                        InsightStatus.PENDING_APPROVAL
-                        if evaluation.get("should_propose", False)
-                        else InsightStatus.DRAFT
-                    ),
+                    status=insight_status,
+                    published_at=datetime.now(timezone.utc) if auto_publish else None,
                 )
 
                 session.add(insight)
@@ -322,12 +335,53 @@ def process_log_for_insight(self, log_id: str):
 
                 await session.refresh(insight)
 
+                # Step 5: 自動公開の場合はベクトルDBにも保存
+                vector_id = None
+                if auto_publish:
+                    try:
+                        vector_id = await knowledge_store.store_insight(
+                            insight_id=str(insight.id),
+                            insight={
+                                "title": insight.title,
+                                "context": insight.context,
+                                "problem": insight.problem,
+                                "solution": insight.solution,
+                                "summary": insight.summary,
+                                "topics": insight.topics or [],
+                                "tags": insight.tags or [],
+                            },
+                        )
+                        if vector_id:
+                            insight.vector_id = vector_id
+                            await session.commit()
+                        logger.info(
+                            f"Auto-published insight {insight.id} to knowledge store "
+                            f"(score={sharing_score}, vector_id={vector_id})"
+                        )
+                    except Exception as ve:
+                        logger.warning(
+                            f"Failed to store auto-published insight in vector DB: {ve}"
+                        )
+
+                promotion_type = (
+                    "auto_published" if auto_publish
+                    else "pending_approval" if should_propose
+                    else "draft"
+                )
+                logger.info(
+                    f"Insight pipeline complete: log_id={log_id}, "
+                    f"insight_id={insight.id}, score={sharing_score}, "
+                    f"promotion={promotion_type}"
+                )
+
                 return {
                     "status": "success",
                     "log_id": log_id,
                     "insight_id": str(insight.id),
-                    "should_propose": evaluation.get("should_propose", False),
-                    "sharing_value_score": evaluation.get("sharing_value_score", 0),
+                    "should_propose": should_propose,
+                    "auto_published": auto_publish,
+                    "sharing_value_score": sharing_score,
+                    "promotion_type": promotion_type,
                 }
 
             except Exception as e:

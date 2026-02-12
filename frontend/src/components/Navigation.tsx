@@ -3,6 +3,7 @@
 /**
  * MINDYARD - Navigation Component
  */
+import { useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -15,10 +16,29 @@ import { useAuthStore, useNotificationStore } from '@/lib/store';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
+const POLL_INTERVAL_MS = 30_000; // 30秒ごとに承認待ちをチェック
+
 export function Navigation() {
   const pathname = usePathname();
   const { user, isAuthenticated, logout } = useAuthStore();
-  const { pendingProposalCount } = useNotificationStore();
+  const { pendingProposalCount, setPendingProposalCount } = useNotificationStore();
+
+  // 承認待ちインサイトの件数をポーリング
+  const fetchPendingCount = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const proposals = await api.getPendingProposals();
+      setPendingProposalCount(proposals.length);
+    } catch {
+      // 認証切れなどは無視
+    }
+  }, [isAuthenticated, setPendingProposalCount]);
+
+  useEffect(() => {
+    fetchPendingCount(); // 初回チェック
+    const id = setInterval(fetchPendingCount, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [fetchPendingCount]);
 
   const handleLogout = () => {
     api.logout();
@@ -40,7 +60,9 @@ export function Navigation() {
     },
   ];
 
-  if (!isAuthenticated) {
+  // 未認証 or 認証ページにいる場合はシンプルなナビを表示
+  const isAuthPage = pathname === '/login' || pathname === '/register';
+  if (!isAuthenticated || isAuthPage) {
     return (
       <nav className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 z-40">
         <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">

@@ -104,7 +104,8 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(default="redis://localhost:6379/2")
 
     # Layer 2 Processing
-    sharing_threshold_score: int = 70  # 共有価値スコアの閾値
+    sharing_threshold_score: int = 70  # 共有提案の閾値（この値以上で PENDING_APPROVAL）
+    auto_publish_threshold_score: int = 80  # 自動公開の閾値（この値以上で即 APPROVED）
 
     # CORS
     backend_cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8000"]
