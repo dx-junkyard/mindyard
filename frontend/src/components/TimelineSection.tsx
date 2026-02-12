@@ -5,12 +5,13 @@
  * AIエージェントページ内に配置する過去ログのタイムライン
  */
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
   ChevronRight,
   Loader2,
   Calendar as CalendarIcon,
+  Trash2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
@@ -52,6 +53,28 @@ interface TimelineSectionProps {
 
 export function TimelineSection({ selectedLogId, onSelectLog }: TimelineSectionProps) {
   const [page, setPage] = useState(1);
+  const [deletingThread, setDeletingThread] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  /** スレッド内の全ログを削除 */
+  const handleDeleteThread = async (
+    e: React.MouseEvent,
+    threadKey: string,
+    logs: RawLog[]
+  ) => {
+    e.stopPropagation(); // 親の onClick（ログ選択）を発火させない
+    if (!confirm(`このスレッド（${logs.length}件）を削除しますか？`)) return;
+
+    setDeletingThread(threadKey);
+    try {
+      await Promise.all(logs.map((log) => api.deleteLog(log.id)));
+      queryClient.invalidateQueries({ queryKey: ['logs'] });
+    } catch (err) {
+      console.error('Failed to delete thread:', err);
+    } finally {
+      setDeletingThread(null);
+    }
+  };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['logs', page],
@@ -101,12 +124,12 @@ export function TimelineSection({ selectedLogId, onSelectLog }: TimelineSectionP
                 const isSelected = selectedLogId === root.id;
                 const count = logs.length;
                 return (
-                  <li key={threadKey}>
+                  <li key={threadKey} className="group relative">
                     <button
                       type="button"
                       onClick={() => onSelectLog?.(root.id)}
                       className={cn(
-                        'w-full text-left rounded-lg border p-3 transition-colors',
+                        'w-full text-left rounded-lg border p-3 pr-9 transition-colors',
                         isSelected
                           ? 'border-primary-300 bg-primary-50/80 ring-1 ring-primary-200'
                           : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50/50'
@@ -156,6 +179,20 @@ export function TimelineSection({ selectedLogId, onSelectLog }: TimelineSectionP
                       <div className="text-xs text-gray-400 mt-1.5">
                         {formatDateTime(logs[logs.length - 1].created_at)}
                       </div>
+                    </button>
+                    {/* 削除ボタン（ホバーで表示） */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteThread(e, threadKey, logs)}
+                      disabled={deletingThread === threadKey}
+                      className="absolute top-2 right-2 p-1.5 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-500 transition-all disabled:opacity-50"
+                      title="このスレッドを削除"
+                    >
+                      {deletingThread === threadKey ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
                     </button>
                   </li>
                 );

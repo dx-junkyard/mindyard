@@ -21,6 +21,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 class ApiClient {
   private client: AxiosInstance;
   private token: string | null = null;
+  private _onUnauthorized: (() => void) | null = null;
 
   constructor() {
     this.client = axios.create({
@@ -38,10 +39,27 @@ class ApiClient {
       return config;
     });
 
+    // レスポンスインターセプター: 401 を検出してログアウト
+    this.client.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response?.status === 401) {
+          this.setToken(null);
+          this._onUnauthorized?.();
+        }
+        return Promise.reject(error);
+      }
+    );
+
     // トークンをローカルストレージから復元
     if (typeof window !== 'undefined') {
       this.token = localStorage.getItem('mindyard_token');
     }
+  }
+
+  /** 401 発生時のコールバックを設定（Zustand ストアからログアウト用） */
+  onUnauthorized(callback: () => void) {
+    this._onUnauthorized = callback;
   }
 
   setToken(token: string | null) {

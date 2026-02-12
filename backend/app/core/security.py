@@ -2,6 +2,8 @@
 MINDYARD - Security Module
 認証・認可とセキュリティ機能
 """
+import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -10,8 +12,16 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 # パスワードハッシュ設定
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ── 起動ごとにランダムな nonce を生成 ──
+# コンテナ再起動で新しい値になるため、旧トークンは全て無効になる
+_BOOT_NONCE = secrets.token_hex(16)
+_EFFECTIVE_SECRET = settings.secret_key + ":" + _BOOT_NONCE
+logger.info("Security boot nonce generated — all previous tokens invalidated")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -44,7 +54,7 @@ def create_access_token(
 
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.secret_key,
+        _EFFECTIVE_SECRET,
         algorithm=settings.algorithm
     )
     return encoded_jwt
@@ -55,7 +65,7 @@ def decode_access_token(token: str) -> Optional[str]:
     try:
         payload = jwt.decode(
             token,
-            settings.secret_key,
+            _EFFECTIVE_SECRET,
             algorithms=[settings.algorithm]
         )
         return payload.get("sub")
