@@ -57,6 +57,22 @@ class EmotionTag(str, Enum):
     NEUTRAL = "neutral"  # 中立
 
 
+# 追加: DB内の値が大文字・小文字混在している状態に対応するためのマッピング関数
+def resolve_log_intent_values(enum_cls):
+    """
+    SQLAlchemyのEnumマッピング用関数
+    DBのEnum定義が歴史的経緯で大文字/小文字混在しているため、それに合わせる
+    - 新規値(DEEP_RESEARCH): 小文字 (Value) -> 'deep_research'
+    - 既存値(LOG, VENT...): 大文字 (Name) -> 'LOG', 'VENT'
+    """
+    values = []
+    for member in enum_cls:
+        if member.name == "DEEP_RESEARCH":
+            values.append(member.value)  # "deep_research"
+        else:
+            values.append(member.name)   # "LOG", "VENT", "STRUCTURE", "STATE"
+    return values
+
 class RawLog(Base):
     """
     Layer 1: Private Logger のログエントリ
@@ -98,7 +114,7 @@ class RawLog(Base):
 
     # Context Analyzer によるメタデータ
     intent: Mapped[Optional[LogIntent]] = mapped_column(
-        SQLEnum(LogIntent),
+        SQLEnum(LogIntent, values_callable=resolve_log_intent_values),
         nullable=True,
     )
     emotions: Mapped[Optional[List[str]]] = mapped_column(
