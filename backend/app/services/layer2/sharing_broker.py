@@ -27,7 +27,6 @@ class SharingBroker:
     def __init__(self):
         self._provider: Optional[LLMProvider] = None
         self.threshold = settings.sharing_threshold_score
-        self.auto_publish_threshold = settings.auto_publish_threshold_score
 
     def _get_provider(self) -> Optional[LLMProvider]:
         """LLMプロバイダーを取得（遅延初期化）"""
@@ -117,7 +116,6 @@ class SharingBroker:
             "novelty_score": novelty_score,
             "generality_score": generality_score,
             "should_propose": sharing_score >= self.threshold,
-            "auto_publish": sharing_score >= self.auto_publish_threshold,
             "reasoning": result.get("reasoning", ""),
         }
 
@@ -145,7 +143,6 @@ class SharingBroker:
             "novelty_score": score,
             "generality_score": score,
             "should_propose": score >= self.threshold,
-            "auto_publish": score >= self.auto_publish_threshold,
             "reasoning": "自動評価によるスコアリング",
         }
 
