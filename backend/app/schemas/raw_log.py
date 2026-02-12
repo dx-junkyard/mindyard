@@ -74,6 +74,7 @@ class AckResponse(BaseModel):
     transcribed_text: Optional[str] = None  # 音声入力時の文字起こしテキスト
     skip_structural_analysis: bool = False
     conversation_reply: Optional[str] = None  # 会話エージェントが生成した自然な返答（ラリー用）
+    requires_research_consent: bool = False  # Deep Research の提案が含まれている場合 True
 
     @classmethod
     def create_ack(

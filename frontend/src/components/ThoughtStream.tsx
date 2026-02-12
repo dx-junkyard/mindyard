@@ -7,12 +7,12 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import Link from 'next/link';
-import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useRecommendationStore, useConversationStore, rawLogToMessages } from '@/lib/store';
 import type { ChatMessage } from '@/lib/store';
 import { cn, formatRelativeTime } from '@/lib/utils';
-import type { AckResponse, RawLog } from '@/types';
+import type { AckResponse, RawLog, ResearchPlan } from '@/types';
 
 // 整理プロセスのステップ定義
 interface AnalysisStep {
@@ -51,6 +51,9 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
   const [analysisSteps, setAnalysisSteps] = useState<AnalysisStep[]>([]);
   const [isAnalysisExpanded, setIsAnalysisExpanded] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [isResearching, setIsResearching] = useState(false);
+  const [researchLogId, setResearchLogId] = useState<string | null>(null);
+  const researchPollingRef = useRef<NodeJS.Timeout>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<NodeJS.Timeout>();
@@ -319,6 +322,7 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
         content: replyContent,
         timestamp: new Date().toISOString(),
         logId: response.log_id,
+        requiresResearchConsent: response.requires_research_consent,
       };
 
       addMessage(replyMessage);
@@ -376,6 +380,174 @@ MINDYARD で思考を整理しました`;
       console.error('コピーに失敗しました:', error);
     }
   }, []);
+
+  // Deep Research ポーリング: result_log_id の assistant_reply を監視
+  useEffect(() => {
+    if (!researchLogId) return;
+
+    const pollForResearchResult = async () => {
+      try {
+        const log = await api.getLog(researchLogId);
+        if (log.assistant_reply) {
+          // 結果が到着 — 「調査中...」を除去して結果を表示
+          const resultMessage: ChatMessage = {
+            id: `research-result-${researchLogId}`,
+            type: 'assistant',
+            content: log.assistant_reply,
+            timestamp: new Date().toISOString(),
+            researchSummary: log.metadata_analysis?.deep_research?.summary,
+            researchDetails: log.metadata_analysis?.deep_research?.details,
+            isResearchCacheHit: log.metadata_analysis?.deep_research?.is_cache_hit,
+          };
+          const currentMsgs = useConversationStore.getState().messages;
+          setMessages([
+            ...currentMsgs.filter((m) => !m.id.startsWith('researching-')),
+            resultMessage,
+          ]);
+          setIsResearching(false);
+          setResearchLogId(null);
+        }
+      } catch {
+        // 404 等は無視（ログがまだ作成されていない）
+      }
+    };
+
+    // 初回実行
+    pollForResearchResult();
+    // 3秒間隔でポーリング
+    researchPollingRef.current = setInterval(pollForResearchResult, 3000);
+
+    return () => {
+      if (researchPollingRef.current) {
+        clearInterval(researchPollingRef.current);
+      }
+    };
+  }, [researchLogId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep Research Step 1: 「提案」— 調査計画書を生成させる
+  const handleDeepResearch = useCallback(async (message: ChatMessage) => {
+    if (isResearching) return;
+
+    // 元メッセージの実行ボタンを消して再実行を防止
+    const beforeMsgs = useConversationStore.getState().messages;
+    setMessages(
+      beforeMsgs.map((m) =>
+        m.id === message.id
+          ? { ...m, requiresResearchConsent: false, researchConsentConsumed: true }
+          : m
+      )
+    );
+
+    // 「計画を作成中...」メッセージを表示
+    const preparingMessage: ChatMessage = {
+      id: `researching-${Date.now()}`,
+      type: 'system',
+      content: '調査計画を作成しています...',
+      timestamp: new Date().toISOString(),
+    };
+    addMessage(preparingMessage);
+
+    try {
+      const userMsg = messages.find(
+        (m) => m.logId === message.logId && m.type === 'user'
+      );
+      const queryText = userMsg?.content || message.content;
+
+      const result = await api.converse(queryText, {
+        researchApproved: true,
+        threadId: continuingThreadId ?? undefined,
+      });
+
+      // 調査計画書が返ってきた場合 → 確認カードとして表示
+      const planMessage: ChatMessage = {
+        id: `research-plan-${Date.now()}`,
+        type: 'assistant',
+        content: result.response,
+        timestamp: new Date().toISOString(),
+        researchPlan: result.research_plan ?? undefined,
+      };
+      const currentMsgs = useConversationStore.getState().messages;
+      setMessages([
+        ...currentMsgs.filter((m) => !m.id.startsWith('researching-')),
+        planMessage,
+      ]);
+    } catch (error) {
+      console.error('調査計画の作成に失敗:', error);
+      const errorMsg: ChatMessage = {
+        id: `research-error-${Date.now()}`,
+        type: 'system',
+        content: '調査計画の作成に失敗しました。もう一度お試しください。',
+        timestamp: new Date().toISOString(),
+      };
+      const currentMsgs = useConversationStore.getState().messages;
+      setMessages([
+        ...currentMsgs.filter((m) => !m.id.startsWith('researching-')),
+        errorMsg,
+      ]);
+    }
+  }, [isResearching, messages, addMessage, setMessages, continuingThreadId]);
+
+  // Deep Research Step 2: 「確認」— 調査計画を確定して実行を開始
+  const handleConfirmResearchPlan = useCallback(async (plan: ResearchPlan, planMessageId: string) => {
+    if (isResearching) return;
+
+    setIsResearching(true);
+
+    // 計画カードのボタンを消して「実行中...」メッセージに差し替え
+    const executingMessage: ChatMessage = {
+      id: `researching-${Date.now()}`,
+      type: 'system',
+      content: `「${plan.title}」の調査を開始しました...`,
+      timestamp: new Date().toISOString(),
+    };
+
+    // 元の計画メッセージから researchPlan を消す（ボタンを非表示に）
+    const currentMsgs = useConversationStore.getState().messages;
+    const updatedMsgs = currentMsgs.map((m) =>
+      m.id === planMessageId ? { ...m, researchPlan: undefined } : m
+    );
+    setMessages([...updatedMsgs, executingMessage]);
+
+    try {
+      const result = await api.converse(plan.sanitized_query, {
+        researchPlanConfirmed: true,
+        researchPlan: plan,
+        threadId: continuingThreadId ?? undefined,
+      });
+
+      // バックグラウンドタスクの result_log_id でポーリング開始
+      if (result.background_task?.result_log_id) {
+        setResearchLogId(result.background_task.result_log_id);
+      }
+
+      // 即時レスポンスを表示
+      const ackMessage: ChatMessage = {
+        id: `research-ack-${Date.now()}`,
+        type: 'system',
+        content: result.response,
+        timestamp: new Date().toISOString(),
+      };
+      const msgs = useConversationStore.getState().messages;
+      setMessages([
+        ...msgs.filter((m) => !m.id.startsWith('researching-')),
+        ackMessage,
+      ]);
+    } catch (error) {
+      console.error('Deep Research 実行エラー:', error);
+      const errorMsg: ChatMessage = {
+        id: `research-error-${Date.now()}`,
+        type: 'system',
+        content: 'Deep Research の実行に失敗しました。もう一度お試しください。',
+        timestamp: new Date().toISOString(),
+      };
+      const msgs = useConversationStore.getState().messages;
+      setMessages([
+        ...msgs.filter((m) => !m.id.startsWith('researching-')),
+        errorMsg,
+      ]);
+      setIsResearching(false);
+    }
+  }, [isResearching, setMessages, continuingThreadId]);
 
   // キーボードショートカット
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -598,7 +770,72 @@ MINDYARD で思考を整理しました`;
                 )}
               </div>
             )}
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            <p className="whitespace-pre-wrap">{message.researchSummary || message.content}</p>
+            {message.type === 'assistant' && message.researchDetails && (
+              <details className="mt-2 pt-2 border-t border-gray-200">
+                <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                  詳細を表示
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-gray-700">
+                  {message.researchDetails}
+                </p>
+                {message.isResearchCacheHit && (
+                  <p className="mt-2 text-xs text-emerald-600">
+                    既存の共有ナレッジを再利用したため、再実行をスキップしました。
+                  </p>
+                )}
+              </details>
+            )}
+            {message.type === 'assistant' && message.requiresResearchConsent && !message.researchConsentConsumed && !isResearching && !message.researchPlan && (
+              <button
+                onClick={() => handleDeepResearch(message)}
+                className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 transition-colors shadow-sm"
+              >
+                <Search className="w-4 h-4" />
+                Deep Research を実行する
+              </button>
+            )}
+            {message.type === 'assistant' && message.researchPlan && !isResearching && (
+              <div className="mt-3 p-4 rounded-lg bg-indigo-50 border border-indigo-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Search className="w-4 h-4 text-indigo-600" />
+                  <span className="text-sm font-semibold text-indigo-800">調査計画書</span>
+                </div>
+                <h4 className="text-sm font-bold text-gray-800 mb-2">{message.researchPlan.title}</h4>
+                <dl className="space-y-1.5 text-sm text-gray-700 mb-3">
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">トピック</dt>
+                    <dd>{message.researchPlan.topic}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">調査範囲</dt>
+                    <dd>{message.researchPlan.scope}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-medium text-gray-500">視点</dt>
+                    <dd>
+                      <ul className="list-disc list-inside">
+                        {message.researchPlan.perspectives.map((p, i) => (
+                          <li key={i}>{p}</li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                </dl>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleConfirmResearchPlan(message.researchPlan!, message.id)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 transition-colors shadow-sm"
+                  >
+                    <Search className="w-4 h-4" />
+                    この内容で調査開始
+                  </button>
+                  <span className="text-xs text-gray-500">
+                    条件を変更したい場合はチャットで指示してください
+                  </span>
+                </div>
+              </div>
+            )}
             {message.type === 'ai-question' && message.structuralAnalysis && (
               <details className="mt-2 pt-2 border-t border-gray-200">
                 <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-500">
@@ -629,6 +866,13 @@ MINDYARD で思考を整理しました`;
           <div className="mr-auto bg-gray-100 rounded-lg p-3 flex items-center gap-2 text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>受け取っています...</span>
+          </div>
+        )}
+
+        {isResearching && (
+          <div className="mr-auto bg-indigo-50 border border-indigo-100 rounded-lg p-3 flex items-center gap-2 text-indigo-600">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Deep Research を実行中...</span>
           </div>
         )}
 
