@@ -4,11 +4,13 @@
  * MINDYARD - Recommendation Panel
  * Serendipity Matcher による「副作用的」レコメンデーション表示
  */
+import { useRouter } from 'next/navigation';
 import { X, Sparkles, ThumbsUp } from 'lucide-react';
 import { useRecommendationStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 
 export function RecommendationPanel() {
+  const router = useRouter();
   const { recommendations, isVisible, displayMessage, hideRecommendations } =
     useRecommendationStore();
 
@@ -71,7 +73,13 @@ export function RecommendationPanel() {
 
       {/* フッター */}
       <div className="p-2 bg-gray-50 border-t border-gray-100 text-center">
-        <button className="text-xs text-gray-500 hover:text-gray-700">
+        <button
+          onClick={() => {
+            hideRecommendations();
+            router.push('/proposals');
+          }}
+          className="text-xs text-gray-500 hover:text-gray-700"
+        >
           すべて見る
         </button>
       </div>
