@@ -2,7 +2,7 @@
 
 /**
  * MINDYARD - Sharing Proposal Modal
- * Layer 2: 共有提案の承認/拒否UI
+ * Layer 2: 推奨インサイトの承認/拒否UI
  */
 import { useState } from 'react';
 import { X, Share2, XCircle, Sparkles } from 'lucide-react';
@@ -44,7 +44,7 @@ export function SharingProposalModal({
         <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-public-50">
           <div className="flex items-center gap-2 text-public-700">
             <Sparkles className="w-5 h-5" />
-            <span className="font-semibold">共有のご提案</span>
+            <span className="font-semibold">共有の推奨</span>
           </div>
           <button
             onClick={onClose}
