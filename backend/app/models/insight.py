@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 class InsightStatus(str, Enum):
     """インサイトの状態"""
 
-    DRAFT = "draft"  # 生成直後、ユーザー確認待ち
-    PENDING_APPROVAL = "pending_approval"  # 共有提案中
+    DRAFT = "draft"  # 通常（スコア80未満、保存のみ）
+    PENDING_APPROVAL = "pending_approval"  # 推奨（スコア80以上、ユーザーに共有を提案）
     APPROVED = "approved"  # 承認済み、公開
     REJECTED = "rejected"  # ユーザーが拒否
 

@@ -63,6 +63,7 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
   const isPollingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const prevSelectedLogIdRef = useRef<string | null | undefined>(undefined);
 
   const { setRecommendations, clearRecommendations } = useRecommendationStore();
 
@@ -140,9 +141,16 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
     loadThreadLogs();
   }, [selectedLogId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 選択が外れたらスレッド id をクリア（メッセージはそのまま残す）
+  // タイムラインでログ選択 → 選択解除 の遷移時のみスレッド id をクリア
+  // （初回マウントや通常会話中の null→null 遷移ではクリアしない）
   useEffect(() => {
-    if (!selectedLogId) setContinuingThreadId(null);
+    const prev = prevSelectedLogIdRef.current;
+    prevSelectedLogIdRef.current = selectedLogId;
+
+    // 前回が truthy → 今回が falsy のときだけクリア（タイムラインで選択→解除）
+    if (prev && !selectedLogId) {
+      setContinuingThreadId(null);
+    }
   }, [selectedLogId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // メッセージ追加時にスクロール
@@ -328,6 +336,9 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
       };
 
       addMessage(replyMessage);
+
+      // スレッドを継続するために thread_id を保存
+      setContinuingThreadId(response.thread_id);
 
       if (response.research_log_id) {
         // Deep Research が開始された — ポーリングを開始
@@ -664,7 +675,7 @@ MINDYARD で思考を整理しました`;
     addMessage(transcribingMessage);
 
     try {
-      const response: AckResponse = await api.transcribeAudio(audioBlob);
+      const response: AckResponse = await api.transcribeAudio(audioBlob, continuingThreadId);
 
       // 「解析中」メッセージを削除し、結果を表示
       const userMsg: ChatMessage = {
@@ -692,6 +703,9 @@ MINDYARD で思考を整理しました`;
         userMsg,
         replyMsg,
       ]);
+
+      // スレッドを継続するために thread_id を保存
+      setContinuingThreadId(response.thread_id);
 
       if (!response.skip_structural_analysis) {
         // 構造分析のポーリングを開始
@@ -721,16 +735,16 @@ MINDYARD で思考を整理しました`;
     <div className="flex flex-col h-full">
       {/* メッセージエリア */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {selectedLogId && (
+        {(selectedLogId || messages.length > 0) && (
           <div className="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-primary-50 border border-primary-100 text-sm text-primary-800">
-            <span>この会話の続きを話せます</span>
+            <span>{selectedLogId ? 'この会話の続きを話せます' : ''}</span>
             <button
               type="button"
               onClick={() => {
                 clearConversation();
                 onClearSelection?.();
               }}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-primary-100 text-primary-700 font-medium transition-colors"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-primary-100 text-primary-700 font-medium transition-colors ml-auto"
             >
               <MessageSquarePlus className="w-4 h-4" />
               新しい会話を始める
@@ -971,17 +985,19 @@ MINDYARD で思考を整理しました`;
 
       {/* 入力エリア */}
       <div className="border-t border-gray-200 p-4 bg-white">
-        {/* タイムラインから続けているとき: 新しいチャットに切り替えるボタン（常に見える位置） */}
-        {selectedLogId && (
+        {/* 会話中 or タイムラインから続けているとき: 新しいチャットに切り替えるボタン */}
+        {(selectedLogId || messages.length > 0) && (
           <div className="mb-3 flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-primary-50 border border-primary-100">
-            <span className="text-sm text-primary-800">この会話の続き</span>
+            <span className="text-sm text-primary-800">
+              {selectedLogId ? 'この会話の続き' : ''}
+            </span>
             <button
               type="button"
               onClick={() => {
                 clearConversation();
                 onClearSelection?.();
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary-300 bg-white text-primary-700 text-sm font-medium hover:bg-primary-50 transition-colors shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary-300 bg-white text-primary-700 text-sm font-medium hover:bg-primary-50 transition-colors shadow-sm ml-auto"
             >
               <MessageSquarePlus className="w-4 h-4" />
               新しいチャットを始める

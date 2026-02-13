@@ -83,6 +83,7 @@ export interface RawLogListResponse {
 export interface AckResponse {
   message: string;
   log_id: string;
+  thread_id: string;  // スレッドID（次の送信で継続するために使用）
   timestamp: string;
   transcribed_text?: string;  // 音声入力時の文字起こしテキスト
   skip_structural_analysis?: boolean;
@@ -127,7 +128,7 @@ export interface SharingProposal {
 }
 
 // Conversation (LangGraph Hypothesis-Driven Routing)
-export type ConversationIntent = 'chat' | 'empathy' | 'knowledge' | 'deep_dive' | 'brainstorm' | 'probe';
+export type ConversationIntent = 'chat' | 'empathy' | 'knowledge' | 'deep_dive' | 'brainstorm' | 'probe' | 'state_share';
 
 export type PreviousEvaluation = 'positive' | 'negative' | 'pivot' | 'none';
 
