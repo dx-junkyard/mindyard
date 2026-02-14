@@ -101,23 +101,12 @@ class SerendipityMatcher:
     ) -> Dict:
         """
         現在の入力に関連するインサイトを検索
-
-        Args:
-            current_input: ユーザーが入力中のテキスト
-            user_id: ユーザーID（パーソナライズ用）
-            exclude_ids: 除外するインサイトID
-
-        Returns:
-            {
-                "has_recommendations": bool,
-                "recommendations": List[Dict],
-                "trigger_reason": str,
-            }
         """
         stripped_input = current_input.strip()
+        input_len = len(stripped_input)
 
         # 最低文字数チェック
-        if len(stripped_input) < self.min_content_length:
+        if input_len < self.min_content_length:
             return {
                 "has_recommendations": False,
                 "recommendations": [],
@@ -143,18 +132,35 @@ class SerendipityMatcher:
                 if c.get("insight_id") not in exclude_ids
             ]
 
+        candidate_count = len(broad_candidates)
+        # 【追加】Step 1 の結果をログ出力
+        logger.info(f"[Step 1: Broad Retrieval] Found {candidate_count} candidates. (Threshold: {BROAD_SCORE_THRESHOLD})")
+
         # --- Step 2: LLM Synergy Evaluation (シナジー判定) ---
-        # ガード節: 入力が短い or 候補が少なすぎる場合はLLM評価をスキップ
-        if (
-            len(stripped_input) >= MIN_INPUT_LENGTH_FOR_TEAM
-            and len(broad_candidates) >= MIN_CANDIDATES_FOR_TEAM
-        ):
+        # ガード節の判定状況をログ出力
+        if input_len < MIN_INPUT_LENGTH_FOR_TEAM or candidate_count < MIN_CANDIDATES_FOR_TEAM:
+            logger.info(
+                f"[Step 2: LLM Skip] Criteria not met: Input length {input_len}/{MIN_INPUT_LENGTH_FOR_TEAM}, "
+                f"Candidates {candidate_count}/{MIN_CANDIDATES_FOR_TEAM}"
+            )
+        else:
+            # 【追加】LLM評価開始のログ
+            logger.info(f"[Step 2: LLM Evaluation] Starting synergy analysis with {candidate_count} candidates...")
+            
             team_proposal = await self._evaluate_team_synergy(
                 current_input=stripped_input,
                 candidates=broad_candidates,
             )
+            
             if team_proposal:
+                matched_members = len(team_proposal["recommendations"][0].get("team_members", []))
+                # 【追加】マッチング成功時のログ
+                logger.info(f"[Step 2: Success] Flash Team formed with {matched_members} members.")
                 return team_proposal
+            else:
+                logger.info("[Step 2: LLM Finished] No synergy found between candidates.")
+
+        # --- Fallback: 通常の類似検索結果を返す ---
 
         # --- Fallback: 通常の類似検索結果を返す ---
         # 通常閾値でフィルタリング
