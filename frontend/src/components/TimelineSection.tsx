@@ -24,6 +24,33 @@ import type { RawLog } from '@/types';
 
 const PAGE_SIZE = 20;
 
+/** 分析タイムアウト: 作成から2分以上経過したらスピナーを止める */
+const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000;
+
+/**
+ * ログがまだ分析中かどうかを判定する。
+ * - STATE インテントのログは構造分析がスキップされるため、
+ *   is_structure_analyzed=false でも「分析中」とは扱わない。
+ * - 作成から2分以上経過している場合もスピナーを止める（タスク失敗時の無限スピン防止）。
+ */
+function isStillAnalyzing(log: RawLog): boolean {
+  // 両方完了していれば問題なし
+  if (log.is_analyzed && log.is_structure_analyzed) return false;
+
+  // タイムアウト: 古すぎるログは分析完了扱いにする
+  const age = Date.now() - new Date(log.created_at).getTime();
+  if (age > ANALYSIS_TIMEOUT_MS) return false;
+
+  // 文脈分析（context_analyzer）がまだなら分析中
+  if (!log.is_analyzed) return true;
+
+  // 構造分析について: STATE インテントはスキップされるので分析中ではない
+  if (log.intent === 'state') return false;
+
+  // それ以外で構造分析が未完了なら分析中
+  return !log.is_structure_analyzed;
+}
+
 /** ログ一覧を thread_id でグループ化し、スレッドごとにまとめる（先頭ログ基準でソート） */
 function groupLogsByThread(items: RawLog[]): { threadKey: string; logs: RawLog[] }[] {
   const byThread = new Map<string, RawLog[]>();
@@ -81,7 +108,7 @@ export function TimelineSection({ selectedLogId, onSelectLog }: TimelineSectionP
     queryFn: () => api.getLogs(page, PAGE_SIZE),
     refetchInterval: (query) => {
       const items = query.state.data?.items;
-      if (items?.some((log) => !log.is_analyzed || !log.is_structure_analyzed)) {
+      if (items?.some((log) => isStillAnalyzing(log))) {
         return 3000;
       }
       return false;
@@ -143,7 +170,7 @@ export function TimelineSection({ selectedLogId, onSelectLog }: TimelineSectionP
                           {count}件のやりとり
                         </p>
                       )}
-                      {(!root.is_analyzed || !root.is_structure_analyzed) && (
+                      {isStillAnalyzing(root) && (
                         <div className="flex items-center gap-1.5 text-xs text-blue-600 mt-2">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           <span>

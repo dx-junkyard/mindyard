@@ -22,7 +22,7 @@ class SerendipityMatcher:
     def __init__(self):
         self.min_content_length = 20  # 最低限必要な文字数
         self.recommendation_limit = 3  # 推奨表示数
-        self.score_threshold = 0.65  # 類似度閾値（やや緩め）
+        self.score_threshold = 0.35  # 類似度閾値（データ量が少ない段階では緩めに設定）
 
     async def find_related_insights(
         self,

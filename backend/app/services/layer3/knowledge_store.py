@@ -58,17 +58,22 @@ class KnowledgeStore:
             vector_size = embedding_provider.vector_size if embedding_provider else 1536
 
             # コレクションが存在しない場合は作成
-            collections = self.qdrant_client.get_collections().collections
-            collection_names = [c.name for c in collections]
+            try:
+                collections = self.qdrant_client.get_collections().collections
+                collection_names = [c.name for c in collections]
 
-            if self.collection_name not in collection_names:
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=models.VectorParams(
-                        size=vector_size,
-                        distance=models.Distance.COSINE,
-                    ),
-                )
+                if self.collection_name not in collection_names:
+                    self.qdrant_client.create_collection(
+                        collection_name=self.collection_name,
+                        vectors_config=models.VectorParams(
+                            size=vector_size,
+                            distance=models.Distance.COSINE,
+                        ),
+                    )
+            except Exception:
+                # get_collections のパースエラー等は無視
+                # （コレクションが既に存在する場合は問題ない）
+                pass
 
             self._initialized = True
 
@@ -142,7 +147,7 @@ class KnowledgeStore:
         self,
         query: str,
         limit: int = 5,
-        score_threshold: float = 0.7,
+        score_threshold: float = 0.35,
         filter_tags: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
@@ -182,12 +187,13 @@ class KnowledgeStore:
                     ]
                 )
 
-            results = self.qdrant_client.search(
+            response = self.qdrant_client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_embedding,
+                query=query_embedding,
                 limit=limit,
                 score_threshold=score_threshold,
                 query_filter=query_filter,
+                with_payload=True,
             )
 
             return [
@@ -199,7 +205,7 @@ class KnowledgeStore:
                     "tags": hit.payload.get("tags", []),
                     "score": hit.score,
                 }
-                for hit in results
+                for hit in response.points
             ]
 
         except Exception as e:
@@ -249,9 +255,7 @@ class KnowledgeStore:
         try:
             self.qdrant_client.delete(
                 collection_name=self.collection_name,
-                points_selector=models.PointIdsList(
-                    points=[vector_id],
-                ),
+                points_selector=[vector_id],
             )
             return True
         except Exception as e:

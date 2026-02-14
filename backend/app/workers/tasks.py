@@ -519,6 +519,68 @@ def deep_research_task(self, query: str, user_id: str, log_id: str = ""):
     return run_async(_research())
 
 
+@celery_app.task(bind=True, max_retries=2)
+def update_user_profile(self, user_id: str):
+    """
+    Layer 1: ユーザープロファイル更新タスク
+    UserProfiler で直近ログを集計し、User.profile_data に保存する。
+    ログ投稿時にトリガーされるインクリメンタル更新。
+    """
+    async def _update():
+        await engine.dispose()
+        try:
+            from app.services.layer1.user_profiler import user_profiler
+
+            async with async_session_maker() as session:
+                profile = await user_profiler.build_and_save(
+                    session, uuid.UUID(user_id)
+                )
+                signal_count = len(profile.get("signals", []))
+                logger.info(
+                    f"User profile updated: user_id={user_id}, "
+                    f"logs={profile.get('log_count', 0)}, "
+                    f"signals={signal_count}"
+                )
+                return {
+                    "status": "success",
+                    "user_id": user_id,
+                    "log_count": profile.get("log_count", 0),
+                    "signal_count": signal_count,
+                }
+        except Exception as e:
+            logger.error(f"Error updating user profile for {user_id}: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    return run_async(_update())
+
+
+@celery_app.task
+def update_all_user_profiles():
+    """
+    定期バッチ: 全アクティブユーザーのプロファイルを更新する。
+    Celery Beat で2時間ごとに実行される。
+    """
+    async def _update_all():
+        await engine.dispose()
+        from app.models.user import User
+
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(User.id).where(User.is_active == True)  # noqa: E712
+            )
+            user_ids = [str(uid) for (uid,) in result.all()]
+
+        queued = 0
+        for uid in user_ids:
+            update_user_profile.delay(uid)
+            queued += 1
+
+        logger.info(f"Queued profile updates for {queued} users")
+        return {"status": "success", "queued": queued}
+
+    return run_async(_update_all())
+
+
 @celery_app.task
 def process_all_unprocessed_logs():
     """

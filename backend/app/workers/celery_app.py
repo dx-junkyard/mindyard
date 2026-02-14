@@ -32,4 +32,14 @@ celery_app.conf.task_routes = {
     "app.workers.tasks.analyze_log_context": {"queue": "layer1"},
     "app.workers.tasks.analyze_log_structure": {"queue": "layer2"},
     "app.workers.tasks.deep_research_task": {"queue": "layer1"},
+    "app.workers.tasks.update_all_user_profiles": {"queue": "layer1"},
+}
+
+# 定期タスクスケジュール（Celery Beat）
+celery_app.conf.beat_schedule = {
+    "update-user-profiles-every-2h": {
+        "task": "app.workers.tasks.update_all_user_profiles",
+        "schedule": 7200.0,  # 2時間ごと
+        "options": {"queue": "layer1"},
+    },
 }

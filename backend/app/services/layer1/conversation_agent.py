@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.llm import llm_manager
 from app.core.llm_provider import LLMProvider, LLMUsageRole
 from app.models.raw_log import RawLog
+from app.models.user import User
 from app.services.layer3.knowledge_store import knowledge_store
+from app.services.layer1.user_profiler import user_profiler
 
 if TYPE_CHECKING:
     from app.services.layer1.situation_router import SituationResult
@@ -35,6 +37,9 @@ _TALK_SYSTEM_PROMPT = """\
 相手の話に真剣に向き合い、自分の知識も活かしながら対話します。
 
 ## 応答の核心ルール
+0. **共感フェーズ必須**: 悩み・課題・困難の話題では、回答の冒頭に必ず共感を入れる。
+   「それは難しい問題ですよね」「多くの人がそこで躓きます」「お気持ちわかります」等。
+   すぐに解決策や手順に入らず、まず気持ちを受け止める。
 1. 相手の発言の「核」を正確に捉え、**具体的な言葉やキーワード**で応答する。
 2. 自分の知識を惜しまず使い、相手が言及した分野の**具体的な概念・事例・最新動向**に触れる。
 3. 返答は2〜3文。「受け止め＋洞察 or 具体的な切り口の提示」の構成にする。
@@ -84,6 +89,14 @@ _TALK_SYSTEM_PROMPT = """\
   押し付けず、会話の中で自然に共有する。具体的な内容（解決策やポイント）を含めること。
 - 関連度が低い場合や会話の流れに合わない場合は無理に言及しない。
 - 「誰が」とは言わない（匿名）。
+
+## ユーザー理解（プロファイル）が提供された場合
+- 【ユーザー理解】セクションには、このユーザーの最近の傾向が書かれている。
+- これは**暗黙的に活かす**ものであり、直接言及してはならない。
+  ×「プロファイルを見ると疲れているようですね」
+  ○ ストレスが多そうなら自然に気遣い、まず聞く姿勢を見せる
+  ○ 特定トピックで悩んでいる傾向があるなら、そこを具体的に掘り下げる
+- カウンセラー的に「言外のサイン」を汲み取り、安心して話せる空気を作る。
 
 ## 文体
 です・ます調。知的で親しみやすく、対等な立場で。"""
@@ -163,6 +176,11 @@ _DO_SYSTEM_PROMPT = """\
 - 関連度が低い場合は無理に言及しない。
 - 「誰が」とは言わない（匿名）。
 
+## ユーザー理解（プロファイル）が提供された場合
+- 【ユーザー理解】セクションの情報は暗黙的に活かす。直接言及は禁止。
+- ユーザーの得意分野・苦手分野に合わせて説明の深さを調整する。
+- 特定トピックで繰り返し困っている場合は、根本原因に踏み込む提案をする。
+
 ## 文体
 です・ます調。簡潔で的確。余計な前置き・感想は最小限に。"""
 
@@ -214,9 +232,13 @@ class ConversationAgent:
         # ── Layer 3: みんなの知恵を検索 ──
         related_insights = await self._search_collective_wisdom(new_log.content)
 
+        # ── プロファイル情報を取得 ──
+        profile_summary = await self._get_profile_summary(session, user_id)
+
         messages = self._build_messages(
             new_log.content, history, situation,
             related_insights=related_insights,
+            profile_summary=profile_summary,
         )
 
         try:
@@ -306,6 +328,7 @@ class ConversationAgent:
         history: List[Tuple[str, Optional[str]]],
         situation: Optional["SituationResult"] = None,
         related_insights: Optional[List[Dict]] = None,
+        profile_summary: Optional[str] = None,
     ) -> List[dict]:
         """
         LLM に送るメッセージ配列を構築する。
@@ -341,6 +364,18 @@ class ConversationAgent:
                     f"「何についてですか？」のような聞き返しは禁止。\n\n"
                     f"{context_summary}"
                 )
+
+        # ── ユーザープロファイル注入 ──
+        if profile_summary:
+            system_prompt += (
+                f"\n\n【ユーザー理解（プロファイル）】\n"
+                f"以下はこのユーザーの過去の傾向から推定された情報です。\n"
+                f"直接「プロファイルによると〜」と言及するのは禁止。\n"
+                f"自然な会話の中で、この理解を暗黙的に活かしてください。\n"
+                f"例: ストレスが増加傾向なら、解決策よりまず気持ちを聞く。\n"
+                f"例: 特定トピックで困っている傾向があるなら、その話題で具体的なサポートを。\n\n"
+                f"{profile_summary}"
+            )
 
         # ── Layer 3: みんなの知恵を注入 ──
         if related_insights:
@@ -448,6 +483,28 @@ class ConversationAgent:
         return None
 
     # ════════════════════════════════════════
+    # ユーザープロファイル
+    # ════════════════════════════════════════
+
+    async def _get_profile_summary(
+        self,
+        session: AsyncSession,
+        user_id: object,
+    ) -> Optional[str]:
+        """
+        User.profile_data からプロファイル要約テキストを取得する。
+        profile_data が未構築の場合は None を返す（オンデマンド構築はしない）。
+        """
+        try:
+            user = await session.get(User, user_id)
+            if not user or not user.profile_data:
+                return None
+            return user_profiler.generate_context_summary(user.profile_data)
+        except Exception as e:
+            logger.debug("Failed to get profile summary: %s", e)
+            return None
+
+    # ════════════════════════════════════════
     # Layer 3 連携: みんなの知恵
     # ════════════════════════════════════════
 
@@ -455,7 +512,7 @@ class ConversationAgent:
         self,
         user_content: str,
         limit: int = 3,
-        score_threshold: float = 0.70,
+        score_threshold: float = 0.35,
     ) -> List[Dict]:
         """
         ユーザーの入力を使って Qdrant（みんなの知恵）を検索する。
@@ -498,7 +555,7 @@ class ConversationAgent:
                 )
             return filtered
         except Exception as e:
-            logger.debug("Collective wisdom search failed (non-critical): %s", e)
+            logger.warning("Collective wisdom search failed: %s", e)
             return []
 
     @staticmethod

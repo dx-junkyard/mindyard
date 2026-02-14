@@ -26,7 +26,7 @@ from app.schemas.raw_log import (
 from app.services.layer1.context_analyzer import context_analyzer
 from app.services.layer1.conversation_agent import conversation_agent
 from app.services.layer1.situation_router import situation_router
-from app.workers.tasks import analyze_log_structure, process_log_for_insight, deep_research_task
+from app.workers.tasks import analyze_log_structure, process_log_for_insight, deep_research_task, update_user_profile
 from app.core.config import settings
 
 import re
@@ -117,6 +117,13 @@ async def create_log(
     # 精製所パイプラインをキック（Layer 2: 匿名化 → 構造化 → 共有価値評価 → InsightCard）
     try:
         process_log_for_insight.delay(str(log.id))
+    except Exception:
+        pass
+
+    # ── ユーザープロファイル更新（バックグラウンド） ──
+    # 投稿のたびにインクリメンタルに最新化する
+    try:
+        update_user_profile.delay(str(current_user.id))
     except Exception:
         pass
 
